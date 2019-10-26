@@ -1,3 +1,4 @@
+#!/usr/local/bin/python3.8
 
 import curses
 import re
@@ -6,7 +7,7 @@ import sys
 import time
 import threading
 
-import libgerrit
+from lib import libgerrit
 import pytermui.pyterm as UI
 
 
