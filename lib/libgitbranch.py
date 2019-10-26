@@ -4,7 +4,7 @@ from enum import Enum
 import re
 from typing import Callable, Dict, Generic, Iterable, TypeVar
 
-from . import runner
+from . import librun
 
 
 BRANCH_NAME = re.compile(
@@ -78,7 +78,10 @@ class Branch(Generic[T], collections.namedtuple('Branch', [
   @classmethod
   def ReadGitRepo(cls) -> Dict[str, 'Branch']:
     branches = {}
-    for line in runner.RunSimple('git branch -vv').splitlines():
+    r = librun.RunCommand('git branch -vv')
+    if r.returncode:
+      return branches
+    for line in r.stdout.splitlines():
       b = cls.Parse(line)
       branches[b.name] = b
     for branch in branches.values():

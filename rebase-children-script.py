@@ -2,7 +2,7 @@
 
 import sys
 
-from cst_lib import runner, branch_tree
+from lib import librun, libgitbranch
 
 
 CURRENT_BRANCH = None
@@ -10,8 +10,8 @@ YES_VALUES = ('Y', 'y', 'yes', 'Yes')
 
 def setup():
   global CURRENT_BRANCH
-  CURRENT_BRANCH = runner.RunSimple('git branch --show-current')
-  if not CURRENT_BRANCH:
+  CURRENT_BRANCH = librun.RunCommand('git branch --show-current')
+  if CURRENT_BRANCH.returncode:
     raise ValueError('Not in a git repository')
 
 
@@ -29,19 +29,19 @@ def ask_rebase(branch, *_,):
 def main():
   # These commands are non-destructive, so run them regardless
   setup()
-  master = branch_tree.Branch.ReadGitRepo().get('master', None)
+  master = libgitbranch.Branch.ReadGitRepo().get('master', None)
   if not master:
     raise ValueError('No master branch!')
 
   for branch in master.TreeItr(fn=ask_rebase, skip_subtrees_on_empty_ret=True):
     if branch.name == 'master':
       continue
-    runner.RunSimple(f'git checkout {branch.name}')
-    runner.RunSimple(f'git rebase')
+    librun.RunCommand(f'git checkout {branch.name}')
+    librun.RunCommand(f'git rebase')
     usr = 'N'
     while usr not in YES_VALUES:
       usr = input('Rebase completed? [y/N]: ')
-  runner.RunSimple(f'git checkout {CURRENT_BRANCH}')
+  librun.RunCommand(f'git checkout {CURRENT_BRANCH}')
 
 if __name__ == '__main__':
   main()

@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.8
+#!/usr/bin/env python3
 
 import curses
 import re
@@ -8,7 +8,8 @@ import time
 import threading
 
 from lib import libgerrit
-import pytermui.pyterm as UI
+from lib import libpyterm as UI
+from lib import librun
 
 
 GERRIT_UI = UI.Layout(crstatus=('30x6', 'bordered'),
@@ -136,19 +137,11 @@ class GerritUI(object):
       pass
 
 
-def RunCommand(command):
-  return subprocess.run(command,
-                        encoding='utf-8',
-                        shell=True,
-                        stderr=subprocess.PIPE,
-                        stdout=subprocess.PIPE)
-
-
 def GetCLId():
   if len(sys.argv) > 1:
     return sys.argv[1]
 
-  r = RunCommand('git cl issue')
+  r = librun.RunCommand('git cl issue')
   if r.returncode:
     raise ValueError('Can\'t run `git cl issue` here')
 
