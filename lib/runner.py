@@ -16,4 +16,4 @@ def RunSimple(cmd: str) -> str:
     return 'NO STDOUT - DEBUG MODE'
   else:
     result = subprocess.run(list(cmd.split()), stdout=subprocess.PIPE)
-    return result.stdout.decode('utf-8').strip()
+    return result.stdout.decode('utf-8')

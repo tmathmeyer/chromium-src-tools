@@ -15,6 +15,9 @@ class ItrOrder(Enum):
   POSTFIX = 1
   PREFIX = 2
 
+class BranchIndex(collections.namedtuple('BranchIndex', ['Num', 'Of'])):
+  pass
+
 T = TypeVar('T')
 class Branch(Generic[T], collections.namedtuple('Branch', [
   'name', 'parent', 'children', 'checked_out'])):
@@ -41,26 +44,35 @@ class Branch(Generic[T], collections.namedtuple('Branch', [
       "Can't add type {} to instance of class Branch".format(type(other)))
 
   def reparent(self, all_branches):
+    if self.parent[0] == self.name:
+      return
     parent = all_branches.get(self.parent[0], None)
     if parent:
       parent.children.append(self)
       self.parent[0] = parent
 
-  def TreeItr(self, fn:Callable[['Branch', int], T]=lambda b,_:b,
+  def TreeItr(self, fn:Callable[['Branch', int, BranchIndex], T]=lambda b,_:b,
                     order:ItrOrder=ItrOrder.PREFIX,
-                    depth:int=0) -> Iterable[T]:
-    value = fn(self, depth)
+                    skip_subtrees_on_empty_ret:bool=False,
+                    depth:int=0,
+                    idx:BranchIndex=BranchIndex(1, 1)) -> Iterable[T]:
+    value = fn(self, depth, idx)
+    if value is None and skip_subtrees_on_empty_ret:
+      return
     if order == ItrOrder.PREFIX:
       yield value
-    for child in self.children:
-      yield from child.TreeItr(fn, order=order, depth=depth+1)
+    for i, child in enumerate(self.children):
+      yield from child.TreeItr(
+        fn=fn, order=order, depth=depth+1,
+        skip_subtrees_on_empty_ret=skip_subtrees_on_empty_ret,
+        idx=BranchIndex(i+1, len(self.children)))
     if order == ItrOrder.POSTFIX:
       yield value
 
   @classmethod
   def Parse(cls, line:str) -> 'Branch':
     checked_out, name, _, _, parent, _, _ = BRANCH_NAME.search(line).groups()
-    return cls(name or 'master', [parent], [], checked_out)
+    return cls(name or 'master', [parent or 'master'], [], checked_out)
 
 
   @classmethod

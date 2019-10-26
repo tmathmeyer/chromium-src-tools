@@ -1,87 +1,47 @@
 #!/usr/local/bin/python3.8
 
-import subprocess
-import collections
+import sys
 
-DEBUG = False
-
-def run(*cmd):
-  if DEBUG:
-    print(cmd)
-  else:
-    result = subprocess.run(list(cmd), stdout=subprocess.PIPE)
-    return result.stdout.decode('utf-8')
+from cst_lib import runner, branch_tree
 
 
-CURRENT = run('git', 'branch', '--show-current').strip()
+CURRENT_BRANCH = None
+YES_VALUES = ('Y', 'y', 'yes', 'Yes')
+
+def setup():
+  global CURRENT_BRANCH
+  CURRENT_BRANCH = runner.RunSimple('git branch --show-current')
+  if not CURRENT_BRANCH:
+    raise ValueError('Not in a git repository')
 
 
-def parent_of(branchline):
-  parts = branchline.split()
-  if parts[0] == '*':
-    parts = parts[1:]
-  branch_name = parts[0]
-  commit_hash = parts[1]
-  probably_parent = 'master'
-  if parts[2].startswith('['):
-    probably_parent = parts[2]
-  if probably_parent.endswith(':') or probably_parent.endswith(']'):
-    probably_parent = probably_parent[1:-1]
-  else:
-    probably_parent = 'master'
-  return branch_name.strip(), probably_parent.strip()
-
-
-class Branch(collections.namedtuple('Branch', ['name', 'children'])):
-  def __hash__(self):
-    return hash(self.name)
-
-  def add(self, branch):
-    self.children.append(branch)
-
-  def flatten(self):
-    for child in self.children:
-      yield child.name
-
-    for child in self.children:
-      yield from child.flatten()
-
-
-def parse_tree_for(name):
-  branchtext = run('git', 'branch', '-vv')
-  branches = []
-  for line in branchtext.split('\n'):
-    if line.strip():
-      branches.append(parent_of(line.strip()))
-  by_name = {}
-  for branch, parent in branches:
-    if branch not in by_name:
-      by_name[branch] = Branch(branch, [])
-    if parent not in by_name:
-      by_name[parent] = Branch(parent, [])
-    by_name[parent].add(by_name[branch])
-
-  return by_name.get(name, None)
-
-
-def rebase_subtree():
-  tree = parse_tree_for(CURRENT)
-  if not tree:
-    print('Not in a git repository')
-    return
-  for branch in tree.flatten():
-    print(run('git', 'checkout', branch))
-    print(run('git', 'rebase'))
-    usr = 'N'
-    while usr not in ('Y', 'y', 'yes', 'Yes'):
-      usr = input('Rebase finishes? [y/N]: ')
-  run('git', 'checkout', CURRENT)
+def ask_rebase(branch, *_,):
+  if branch.name == 'master':
+    return branch
+  if branch.checked_out == '+':
+    print(f"\"{branch.name}\" is checked out in a different virtual repo. You must rebase there instead.")
+    return None
+  if input(f'Would you like to rebase {branch.name}? [y/N]') in YES_VALUES:
+    return branch
+  return None
 
 
 def main():
-  DEBUG = True
-  rebase_subtree()
+  # These commands are non-destructive, so run them regardless
+  setup()
+  master = branch_tree.Branch.ReadGitRepo().get('master', None)
+  if not master:
+    raise ValueError('No master branch!')
 
+  for branch in master.TreeItr(fn=ask_rebase, skip_subtrees_on_empty_ret=True):
+    if branch.name == 'master':
+      continue
+    runner.RunSimple(f'git checkout {branch.name}')
+    runner.RunSimple(f'git rebase')
+    usr = 'N'
+    while usr not in YES_VALUES:
+      usr = input('Rebase completed? [y/N]: ')
+  runner.RunSimple(f'git checkout {CURRENT_BRANCH}')
 
 if __name__ == '__main__':
   main()

@@ -75,7 +75,6 @@ class Build():
       'is_clang': 'true',
       'symbol_level': '1',
       'enable_mse_mpeg2ts_stream_parser': 'true',
-      'enable_ac3_eac3_audio_demuxing': 'true',
       'ffmpeg_branding': '"ChromeOS"'
     }
 
@@ -92,6 +91,7 @@ class Build():
   def run(self, *args, **kwargs):
     if not os.path.isdir('{}/out/{}'.format(CHROME_DIRECTORY, self.base)):
       os.system('gn gen out/{} --check --args=\'{}\''.format(self.base, self.args()))
+    print('ninja -C out/{} {} -j{}'.format(self.base, self.target, self.j))
     os.system('ninja -C out/{} {} -j{}'.format(self.base, self.target, self.j))
 
 
@@ -177,11 +177,23 @@ class BuildbotEntries(object):
         for log in step.get('logs', []):
           if log['name'] == 'execution details':
             return self._GetGnArgsFromURL(log['viewUrl'])
+        raise ValueError('Could not get \'logs\' json entry for gn args')
+    raise ValueError('Could Not Find GN Args')
 
   def _GetGnArgsFromURL(self, url):
     master = ''
     builder = ''
-    cmd = str(requests.get(url+'?format=raw').content, 'utf-8').split('\n')[0].split()
+    cmd = str(requests.get(url+'?format=raw').content, 'utf-8').split('\n')
+    if (cmd[0]) != 'Executing command [':
+      raise ValueError(f'Could not get command from {url}')
+
+    def yield_until_closebracket():
+      for line in cmd[1:]:
+        if line.strip() == ']':
+          return
+        yield line.strip()[1:-2]
+
+    cmd = list(yield_until_closebracket())
     for i, arg in enumerate(cmd):
       if arg == "-m":
         master = cmd[i+1]
@@ -189,6 +201,7 @@ class BuildbotEntries(object):
         builder = cmd[i+1]
 
       if master and builder:
+        print(master, builder)
         command = './tools/mb/mb.py lookup -m {} -b {} --quiet'
         try:
           import subprocess
@@ -219,7 +232,8 @@ class MultiBuild():
           'func': goma_build(lambda *args: Build(
             target=target,
             base=self.base,
-            gn_args=self.gn_args))
+            gn_args=self.gn_args,
+            j=getattr(self, 'j', 2000)))
       }, target, [])
 
 
@@ -233,13 +247,14 @@ class goma_build():
 
 @complete('bot', 'build the targets the way a bot does')
 @goma_build
-def buildbot(url):
+def buildbot(url, *jobs):
   parsed = urlparse(url)
   if parsed.netloc == 'logs.chromium.org' and parsed.path.endswith('stdout'):
     raise ValueError('Please provide the ci bot args')
 
   bb = BuildbotEntries(url)
-  multibuild = MultiBuild(bb.GetCompileTargets())
+  jobs = jobs or bb.GetCompileTargets()
+  multibuild = MultiBuild(jobs)
   multibuild.gn_args.update(bb.GetGNArgs())
   outdir = parsed.path.split('/')[-2].replace('_', '').upper()
   multibuild.base = 'BOT-' + outdir
@@ -321,12 +336,12 @@ def msanify(builder, *_):
 def Windows(builder, *_):
   builder.gn_args.update({
     'target_os': '"win"',
-    'use_goma': 'false',
+    'use_goma': 'true',
     'proprietary_codecs': 'true',
     'ffmpeg_branding': '"Chrome"',
     'is_debug': 'true',
   })
-  builder.j = 400
+  builder.j = 60
   return builder
 
 
@@ -337,6 +352,13 @@ Default build targets!
 @goma_build
 def chromium():
   return Build()
+
+@complete('devtools', 'build chromium with debug devtools')
+@goma_build
+def devtools():
+  return Build(base='Inspector', gn_args={
+    'debug_devtools': 'true',
+  })
 
 @complete('chrelease', 'build standard chromium (in release)')
 @goma_build
@@ -365,6 +387,16 @@ def cast_shell():
 @goma_build
 def content_unittests():
   return Build(target='content_unittests', base='Tests')
+
+@complete('web_tests', 'build the content unit tests')
+@goma_build
+def web_tests():
+  targets = ['content_shell', 'image_diff', 'minidump_stackwalk', 'dump_syms']
+  multibuild = MultiBuild(targets)
+  multibuild.base = 'Tests'
+  return multibuild
+
+  return Build(target='content_shell', base='Tests')
 
 @complete('media_unit_tests', 'build the media unit tests')
 @goma_build
@@ -475,6 +507,13 @@ def update():
   os.system('gclient sync')
   if branch != 'master':
     os.system('git checkout %s' % branch)
+
+@complete('clusterfuzz', 'run a clusterfuzz!')
+def clusterfuzz(*args):
+  CF_BINARY = '/google/data/ro/teams/clusterfuzz-tools/releases/clusterfuzz'
+  for cf_testcase in args:
+    cmd = f'{CF_BINARY} reproduce {cf_testcase}'
+    os.system(cmd)
 
 
 
