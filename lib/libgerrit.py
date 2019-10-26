@@ -8,6 +8,7 @@ import requests
 
 
 CRREV_DETAIL_URL = 'https://chromium-review.googlesource.com/changes/{}/detail'
+CRREV_COMMENTS_URL = 'https://chromium-review.googlesource.com/changes/{}/comments'
 CRREV_DETAIL_URL_O = 'https://chromium-review.googlesource.com/changes/{}/detail?O=16314'
 PATCHSET_STATUS_URL = ('https://chromium-cq-status.appspot.com/query/codereview'
                        '_hostname=chromium-review.googlesource.com/issue={}/'
@@ -99,6 +100,10 @@ def GetReviewDetail(crrev_id):
 def GetCQStatus(crrev_id, patchset):
   """Get JSON data for a cq job."""
   return JSON.FromURL(PATCHSET_STATUS_URL.format(crrev_id, patchset))
+
+
+def GetComments(crrev_id):
+  return JSON.FromURL(CRREV_COMMENTS_URL.format(crrev_id))
 
 
 def GetRedirectUrl(url):

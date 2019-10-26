@@ -11,16 +11,22 @@ class Layout(object):
 
 
 class Window(object):
-  __slots__ = ('width', 'height', 'x', 'y', 'bordered', 'cursesWin', 'realdims')
+  __slots__ = (
+    'width', 'height', 'x', 'y', 'cursesWin', 'realdims', 'realcoords', 'paintdims',
+    'bordered', 'padwindow', 'padWindowHeightOffset')
 
   def __init__(self, x, y, width, height):
     self.width = width
     self.height = height
     self.x = x
     self.y = y
-    self.bordered = False
     self.cursesWin = None
     self.realdims = (0, 0)
+    self.paintdims = (0, 0)
+    self.realcoords = (0, 0)
+    self.bordered = False
+    self.padwindow = False
+    self.padWindowHeightOffset = 0
 
   def __str__(self):
     return f'{{{self.x}, {self.y}, {self.width}, {self.height}}}'
@@ -29,14 +35,21 @@ class Window(object):
     if not self.cursesWin:
       x = self.x.fixed + cols * self.x.ratio
       y = self.y.fixed + rows * self.y.ratio
+      self.realcoords = (x, y)
       height = min(self.height.fixed + rows * self.height.ratio + 1, rows - y)
       width = min(self.width.fixed + cols * self.width.ratio + 1, cols - x)
-      self.cursesWin = curses.newwin(height, width, y, x)
-      if self.bordered:
-        self.cursesWin.border()
-        self.realdims = (width-2, height-2)
-      else:
+      if self.padwindow:
+        self.cursesWin = curses.newpad(height, width)
+        self.cursesWin.border(0,0,' ')
         self.realdims = (width, height)
+      else:
+        self.cursesWin = curses.newwin(height, width, y, x)
+        if self.bordered:
+          self.cursesWin.border()
+          self.realdims = (width-2, height-2)
+        else:
+          self.realdims = (width, height)
+      self.paintdims = self.realdims
 
   def Width(self):
     return self.realdims[0]
@@ -44,8 +57,47 @@ class Window(object):
   def Height(self):
     return self.realdims[1]
 
+  def _PaddedRefresh(self):
+    try:
+      self.cursesWin.refresh(
+        self.padWindowHeightOffset, 0,
+        self.realcoords[1]+1, self.realcoords[0],
+        self.paintdims[1], self.paintdims[0]+self.realcoords[0])
+    except:
+      raise ValueError(
+        f'Trying to draw pad window (size={self.realdims})\n' +
+        f'from (0, {self.padWindowHeightOffset})\n' +
+        f'inside bounds ({self.realcoords[0]}, {self.realcoords[1]+1}) to' +
+        f' ({self.paintdims[0]+self.realcoords[0]}, {self.paintdims[1]})'
+      )
+
+      raise ValueError(' '.join(str(e) for e in [
+        self.padWindowHeightOffset, 0,
+        self.realcoords[1]+1, self.realcoords[0],
+        self.realdims[1], self.realdims[0]+self.realcoords[0]-2]))
+
+
   def __getattr__(self, attr):
+    if self.padwindow and attr == 'refresh':
+      return self._PaddedRefresh
     return getattr(self.cursesWin, attr)
+
+  def ScrollDown(self):
+    if self.padwindow:
+      self.padWindowHeightOffset += 1
+    if self.padWindowHeightOffset > self.realdims[1] - 1:
+      self.padWindowHeightOffset = self.realdims[1] - 1
+
+  def ScrollUp(self):
+    if self.padwindow:
+      self.padWindowHeightOffset -= 1
+    if self.padWindowHeightOffset < 0:
+      self.padWindowHeightOffset = 0
+
+  def ExtendDown(self, amount):
+    if self.padwindow:
+      self.realdims = (self.realdims[0], self.realdims[1]+amount)
+      self.cursesWin.resize(self.realdims[1], self.realdims[0])
 
 
 
@@ -64,7 +116,6 @@ class TermWindow(object):
     curses.cbreak()
     curses.start_color()
     curses.use_default_colors()
-    self.screen.keypad(True)
     rows, cols = self.screen.getmaxyx()
     for name, win in self.windows.items():
       win.createWindow(rows, cols)
