@@ -1,146 +1,387 @@
 
-
+import abc
 import curses
 import time
+import queue
+import threading
 
 
-class Layout(object):
-  def __init__(self, **windows):
-    self.__dict__.update(windows)
-    self.keys = list(windows.keys())
+class Window(object, metaclass=abc.ABCMeta):
+  __slots__ = ('_window', '_selected')
+
+  def __init__(self, window):
+    self._window = window
+    self._selected = False
+
+  @abc.abstractmethod
+  def Repaint(self, context):
+    pass
+
+  @abc.abstractmethod
+  def Redecorate(self):
+    pass
+
+  @abc.abstractmethod
+  def Width(self):
+    pass
+
+  @abc.abstractmethod
+  def Height(self):
+    pass
+
+  @abc.abstractmethod
+  def Resize(self, x, y, w, h):
+    pass
+
+  def OnKey(self, keycode):
+    return False
+
+  def Paint(self, context):
+    self._window.clear()
+    self.Repaint(context)
+    self.Redecorate()
+
+  def WriteString(self, x, y, string, *args):
+    try:
+      self._window.addstr(y, x, string, *args)
+    except:
+      raise ValueError(f'Cant write string to ({x}, {y}) in window size=({self.Width()}, {self.Height()})')
+
+  def SetSelected(self, selected):
+    self._selected = selected
 
 
-class Window(object):
-  __slots__ = (
-    'width', 'height', 'x', 'y', 'cursesWin', 'realdims', 'realcoords', 'paintdims',
-    'bordered', 'padwindow', 'padWindowHeightOffset')
+class NormalWindow(Window, metaclass=abc.ABCMeta):
+  __slots__ = ('bordered', 'width', 'height')
 
-  def __init__(self, x, y, width, height):
-    self.width = width
-    self.height = height
-    self.x = x
-    self.y = y
-    self.cursesWin = None
-    self.realdims = (0, 0)
-    self.paintdims = (0, 0)
-    self.realcoords = (0, 0)
-    self.bordered = False
-    self.padwindow = False
-    self.padWindowHeightOffset = 0
+  def __init__(self, bordered=False):
+    super().__init__(curses.newwin(0, 0, 0, 0))
+    self.bordered = bordered
+    self.width = 0
+    self.height = 0
 
-  def __str__(self):
-    return f'{{{self.x}, {self.y}, {self.width}, {self.height}}}'
+  def Redecorate(self):
+    if self.bordered:
+      self._window.border()
+    self._window.refresh()
 
-  def createWindow(self, rows, cols):
-    if not self.cursesWin:
-      x = self.x.fixed + cols * self.x.ratio
-      y = self.y.fixed + rows * self.y.ratio
-      self.realcoords = (x, y)
-      height = min(self.height.fixed + rows * self.height.ratio + 1, rows - y)
-      width = min(self.width.fixed + cols * self.width.ratio + 1, cols - x)
-      if self.padwindow:
-        self.cursesWin = curses.newpad(height, width)
-        self.cursesWin.border(0,0,' ')
-        self.realdims = (width, height)
-      else:
-        self.cursesWin = curses.newwin(height, width, y, x)
-        if self.bordered:
-          self.cursesWin.border()
-          self.realdims = (width-2, height-2)
-        else:
-          self.realdims = (width, height)
-      self.paintdims = self.realdims
+  def Resize(self, x, y, w, h):
+    self._window.resize(h, w)
+    self._window.mvwin(y, x)
+    self.width = w
+    self.height = h
 
   def Width(self):
-    return self.realdims[0]
+    return self.width
 
   def Height(self):
-    return self.realdims[1]
-
-  def _PaddedRefresh(self):
-    try:
-      self.cursesWin.refresh(
-        self.padWindowHeightOffset, 0,
-        self.realcoords[1]+1, self.realcoords[0],
-        self.paintdims[1], self.paintdims[0]+self.realcoords[0])
-    except:
-      raise ValueError(
-        f'Trying to draw pad window (size={self.realdims})\n' +
-        f'from (0, {self.padWindowHeightOffset})\n' +
-        f'inside bounds ({self.realcoords[0]}, {self.realcoords[1]+1}) to' +
-        f' ({self.paintdims[0]+self.realcoords[0]}, {self.paintdims[1]})'
-      )
-
-      raise ValueError(' '.join(str(e) for e in [
-        self.padWindowHeightOffset, 0,
-        self.realcoords[1]+1, self.realcoords[0],
-        self.realdims[1], self.realdims[0]+self.realcoords[0]-2]))
+    return self.height
 
 
-  def __getattr__(self, attr):
-    if self.padwindow and attr == 'refresh':
-      return self._PaddedRefresh
-    return getattr(self.cursesWin, attr)
+class ScrollWindow(Window, metaclass=abc.ABCMeta):
+  __slots__ = ('frame_x', 'frame_y', 'frame_w', 'frame_h',
+               'scroll_offset_y', 'realheight', 'upkey', 'downkey')
 
-  def ScrollDown(self):
-    if self.padwindow:
-      self.padWindowHeightOffset += 1
-    if self.padWindowHeightOffset > self.realdims[1] - 1:
-      self.padWindowHeightOffset = self.realdims[1] - 1
+  def __init__(self, up=None, down=None):
+    super().__init__(curses.newpad(1, 1))
+    self.scroll_offset_y = 0
+    self.frame_x = 0
+    self.frame_y = 0
+    self.frame_w = 0
+    self.frame_h = 0
+    self.realheight = 1
+    self.upkey = ScrollWindow.ConvertToKeycode(up)
+    self.downkey = ScrollWindow.ConvertToKeycode(down)
 
-  def ScrollUp(self):
-    if self.padwindow:
-      self.padWindowHeightOffset -= 1
-    if self.padWindowHeightOffset < 0:
-      self.padWindowHeightOffset = 0
+  @classmethod
+  def ConvertToKeycode(cls, letter):
+    if letter == 'j':
+      return 106
+    if letter == 'k':
+      return 107
+    if letter == None:
+      return 0
 
-  def ExtendDown(self, amount):
-    if self.padwindow:
-      self.realdims = (self.realdims[0], self.realdims[1]+amount)
-      self.cursesWin.resize(self.realdims[1], self.realdims[0])
+  def Redecorate(self):
+    self._window.refresh(
+      self.scroll_offset_y, 0,
+      self.frame_y, self.frame_x,
+      self.frame_h+self.frame_y, self.frame_w+self.frame_x)
+
+  def Resize(self, x, y, w, h):
+    self.frame_x = x
+    self.frame_y = y
+    self.frame_w = w
+    self.frame_h = h
+    self.realheight = max(self.realheight, h)
+    self._window.resize(self.realheight, w)
+
+  def Expand(self, delta):
+    self.SetHeight(delta + self.realheight)
+
+  def SetHeight(self, newheight):
+    self.realheight = min(newheight, 127)
+    self.realheight = max(self.realheight, self.frame_h)
+    self._window.resize(self.realheight, self.frame_w)
+
+  def Width(self):
+    return self.frame_w
+
+  def Height(self):
+    return self.realheight
+
+  def OnKey(self, keycode):
+    if keycode == self.upkey:
+      self.scroll_offset_y = max(self.scroll_offset_y-1, 0)
+      return True
+    if keycode == self.downkey:
+      self.scroll_offset_y = min(self.scroll_offset_y+1, self.frame_h-1)
+      return True
+    return False
 
 
+class TerminalWindowArea(object):
+  __slots__ = ('width', 'height', 'x', 'y')
 
-class TermWindow(object):
-  __slots__ = ('screen', 'layout', 'windows')
+  def __init__(self, x, y, width, height):
+    self.x = x
+    self.y = y
+    self.width = width
+    self.height = height
 
-  def __init__(self, layout):
-    self.screen = []
-    self.layout = layout
-    self.windows = {}
-    self.RenderLayout()
+  def __str__(self):
+    return f'x={self.x} y={self.y} w={self.width} h={self.height}'
+
+  def __repr__(self):
+    return str(self)
+
+
+def LayoutWindows(layout):
+  rf = RenderField(TerminalWindowArea)
+  for width, height, wintype in layout:
+    yield (rf.AddWindow(width, height), wintype)
+
+
+class Event(object):
+  def __init__(self, cls):
+    self.etype = cls
+
+  def GetType(self):
+    return self.etype
+
+
+class EndedEvent(Event):
+  def __init__(self):
+    super().__init__(EndedEvent)
+
+
+class KeyEvent(Event):
+  def __init__(self, keycode):
+    super().__init__(KeyEvent)
+    self.keycode = keycode
+
+
+class ResizeEvent(Event):
+  def __init__(self, height, width):
+    super().__init__(ResizeEvent)
+    self.width = width
+    self.height = height
+
+  def Width(self):
+    return self.width
+
+  def Height(self):
+    return self.height
+
+
+class StartupEvent(Event):
+  def __init__(self, height, width):
+    super().__init__(StartupEvent)
+    self.width = width
+    self.height = height
+
+  def Width(self):
+    return self.width
+
+  def Height(self):
+    return self.height
+
+
+class RepaintRequestedEvent(Event):
+  def __init__(self, windows):
+    super().__init__(RepaintRequestedEvent)
+    self.windows = windows
+
+
+class Colorizer(object):
+  def __init__(self):
+    self.colors = {}
+    self.next_idx = 1
+
+  def GetColor(self, fg=None, bg=None):
+    if fg == None and bg == None:
+      return curses.color_pair(0)
+
+    if fg == None:
+      fg = 0
+
+    if bg == None:
+      bg = 0
+
+    if type(fg) is str:
+      fg = getattr(curses, f'COLOR_{fg}')
+
+    if type(bg) is str:
+      bg = getattr(curses, f'COLOR_{bg}')
+
+    fgmap = self.colors.get(fg, None)
+    if not fgmap:
+      self.colors[fg] = {}
+      fgmap = self.colors[fg]
+
+    bgmap = fgmap.get(bg, None)
+    if not bgmap:
+      fgmap[bg] = self.next_idx
+      bgmap = self.next_idx
+      curses.init_pair(self.next_idx, fg, bg)
+      self.next_idx += 1
+
+    return curses.color_pair(bgmap)
+
+
+class Terminal(object):
+  __slots__ = ('windows', 'screen', 'keythread', 'eventqueue',
+               'repaintqueue', 'repaintthread',
+               'windowsCreated', 'context', 'finished')
+
+  def __init__(self, layout, context):
+    self.windows = list(LayoutWindows(layout))
+    self.context = context
+    self.context.terminal = self
+    self.windowsCreated = False
+    self.eventqueue = queue.Queue()
+    self.repaintqueue = queue.Queue()
+
+    self.finished = False
+
+  def Start(self):
+    self.eventqueue.put(StartupEvent(*self.screen.getmaxyx()))
+
+  def SetupColors(self):
+    curses.start_color()
+    curses.use_default_colors()
+    self.context.colors = Colorizer()
 
   def __enter__(self):
     self.screen = curses.initscr()
+    self.SetupColors()
     curses.noecho()
     curses.cbreak()
-    curses.start_color()
-    curses.use_default_colors()
-    rows, cols = self.screen.getmaxyx()
-    for name, win in self.windows.items():
-      win.createWindow(rows, cols)
+    self.screen.keypad(True)
+    self.startKeyListenerThread()
     return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
+    self.finished = True
+    curses.ungetch(27)
+    self.joinKeyListenerThread()
     curses.nocbreak()
     self.screen.keypad(False)
     curses.echo()
     curses.endwin()
 
-  def __getattr__(self, attr):
-    try:
-      return getattr(self.screen, attr)
-    except:
-      return self.windows[attr]
+  def WaitUntilEnded(self):
+    while True:
+      event = self.eventqueue.get()
+      if event.GetType() == ResizeEvent:
+        self.ResizeWindows(event.Width(), event.Height())
+      elif event.GetType() == StartupEvent:
+        self.ResizeWindows(event.Width(), event.Height())
+        self.PaintWindows()
+      elif event.GetType() == EndedEvent:
+        self.repaintqueue.put(event)
+        return
+      elif event.GetType() == KeyEvent:
+        self.PassKey(event.keycode)
+      elif event.GetType() == RepaintRequestedEvent:
+        self.repaintqueue.put(event)
 
-  def RenderLayout(self):
-    rf = RenderField()
-    for windowname in self.layout.keys:
-      params = getattr(self.layout, windowname)
-      resx,resy = params[0].split('x')
-      self.windows[windowname] = rf.AddWindow(resx, resy)
-      for attr in params[1:]:
-        setattr(self.windows[windowname], attr, True)
+  def _RepaintInternal(self, event):
+    self.screen.refresh()
+    if event.windows:
+      for win in event.windows:
+        win.Paint(self.context)
+    else:
+      for _, win in self.windows:
+        win.Paint(self.context)
+
+  def _RepaintThreadInternal(self):
+    while True:
+      event = self.repaintqueue.get()
+      with self.repaintqueue.mutex:
+        self.repaintqueue.queue.clear()
+      if event.GetType() == EndedEvent:
+        return
+      if event.GetType() == RepaintRequestedEvent:
+        self._RepaintInternal(event)
+
+  def PaintWindows(self):
+    if not self.finished:
+      self.eventqueue.put(RepaintRequestedEvent(None))
+
+  def PaintWindow(self, window):
+    if not self.finished:
+      self.eventqueue.put(RepaintRequestedEvent([window]))
+
+  def PassKey(self, keycode):
+    if not self.finished:
+      windows = []
+      for _, win in self.windows:
+        if win.OnKey(keycode):
+          windows.append(win)
+      if windows:
+        self.eventqueue.put(RepaintRequestedEvent(windows))
+
+  def startKeyListenerThread(self):
+    self.keythread = threading.Thread(target=self.KeyListener)
+    self.repaintthread = threading.Thread(target=self._RepaintThreadInternal)
+    self.keythread.start()
+    self.repaintthread.start()
+
+  def joinKeyListenerThread(self):
+    self.keythread.join()
+    self.repaintthread.join()
+
+  def KeyListener(self):
+    while True:
+      inp = self.screen.getch()
+      if inp == curses.KEY_RESIZE:
+        self.eventqueue.put(ResizeEvent(*self.screen.getmaxyx()))
+      elif inp == 27:
+        self.eventqueue.put(EndedEvent())
+        return
+      else:
+        self.eventqueue.put(KeyEvent(inp))
+
+  def ResizeWindows(self, width, height):
+    if not self.windowsCreated and not self.finished:
+      self.windows = [(area, win()) for (area, win) in self.windows]
+      self.windowsCreated = True
+      for _, win in self.windows:
+        win.SetSelected(True)
+        break
+
+    #curses.resizeterm(height, width)
+    for area, win in self.windows:
+      x = area.x.fixed + (width * area.x.ratio)
+      y = area.y.fixed + (height * area.y.ratio)
+      h = area.height.fixed + (height * area.height.ratio)
+      w = area.width.fixed + (width * area.width.ratio)
+      h = min(h, height - y - 2)
+      w = min(w, width - x - 2)
+      win.Resize(x, y, w, h)
+      self.screen.resize(h, w)
+      win.Paint(self.context)
 
 
 class Location(object):
@@ -187,11 +428,12 @@ def RATIO(i):
 
 
 class RenderField(object):
-  def __init__(self):
+  def __init__(self, AreaType):
     self.bounds = list([[FIXED(0), FIXED(0)],
                         [RATIO(1), FIXED(0)],
                         [RATIO(1), RATIO(1)],
                         [FIXED(0), RATIO(1)]])
+    self.AreaType = AreaType
 
   def CoalesceBounds(self):
     newbounds = []
@@ -254,14 +496,17 @@ class RenderField(object):
         # shift third X coord to position of last coord
         self.bounds[0][0] = self.bounds[-1][0]
         self.CoalesceBounds()
-        return Window(x=x, y=y, width=RATIO(1), height=RATIO(1))
+        return self.AreaType(
+          x=x, y=y,
+          width=Location(0-x.fixed, 1),
+          height=Location(0-y.fixed, 1))
       else:
         width = FIXED(self.bounds[1][0].fixed - self.bounds[0][0].fixed)
         height = RATIO(1)
         self.bounds = self.bounds[2:]
         self.bounds[-1][0] = self.bounds[0][0]
         self.CoalesceBounds()
-        return Window(x=x,y=y,width=width,height=height)
+        return self.AreaType(x=x,y=y,width=width,height=height)
 
 
     if width=='...' and self.isFixed(height):
@@ -272,7 +517,7 @@ class RenderField(object):
       self.bounds[1][1] = potentialY
       w = self.bounds[1][0]
       self.CoalesceBounds()
-      return Window(x=x, y=y, width=w, height=height)
+      return self.AreaType(x=x, y=y, width=w, height=height)
 
     if self.isFixed(width) and height=='...':
       width = FIXED(int(width))
@@ -282,7 +527,7 @@ class RenderField(object):
       self.bounds[0][0] = self.bounds[0][0]+width
       self.bounds[-1][0] = self.bounds[-1][0]+width
       self.CoalesceBounds()
-      return Window(x=x, y=y, width=width, height=RATIO(1))
+      return self.AreaType(x=x, y=y, width=width, height=RATIO(1))
 
 
     if self.isFixed(width) and self.isFixed(height):
@@ -294,4 +539,4 @@ class RenderField(object):
                      self.bounds[1:] +
                      [[upper_left[0], upper_left[1]+height],
                       [upper_left[0]+width, upper_left[1]+height]])
-      return Window(x=upper_left[0], y=upper_left[1], width=width, height=height)
+      return self.AreaType(x=upper_left[0], y=upper_left[1], width=width, height=height)
