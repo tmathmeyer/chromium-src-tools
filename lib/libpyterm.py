@@ -90,8 +90,8 @@ class ScrollWindow(Window, metaclass=abc.ABCMeta):
     self.frame_w = 0
     self.frame_h = 0
     self.realheight = 1
-    self.upkey = ScrollWindow.ConvertToKeycode(up)
-    self.downkey = ScrollWindow.ConvertToKeycode(down)
+    self.upkey = ord(up)
+    self.downkey = ord(down)
 
   @classmethod
   def ConvertToKeycode(cls, letter):

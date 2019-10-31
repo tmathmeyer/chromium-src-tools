@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
+import re
+import sys
 import threading
 import time
 
 from lib import libpyterm as UI
 from lib import libgerrit
+from lib import librun
 
 
 class CRMessage(UI.NormalWindow):
@@ -26,9 +29,9 @@ class CRStatus(UI.NormalWindow):
 
   def Repaint(self, context):
     owner = context.cr.owner.name
+    self.WriteString(2, 1, f'Owner: {owner}')
     reviews = context.cr.labels['Code-Review'].all
     if reviews:
-      self.WriteString(2, 1, f'Owner: {owner}')
       self.WriteString(1, 2, 'Reviews:')
       for idx, l in enumerate(reviews):
         color = context.colors.GetColor()
@@ -42,6 +45,7 @@ class CRTryjobs(UI.NormalWindow):
     super().__init__(bordered=True)
     self.tryjobs = {}
     self.setupthread = None
+    self.errmsg = 'Pending CQ Query'
 
   def BotQuery(self, buildername, terminal):
     try:
@@ -53,9 +57,15 @@ class CRTryjobs(UI.NormalWindow):
       self.tryjobs[buildername]['status'] = 'ERROR'
     terminal.PaintWindow(self)
 
+  def OnKey(self, keycode):
+    if keycode == ord('t'):
+      self.setupthread = None
+      return True
+    return False
+
   def ColorForStatus(self, context, status):
     if status == 'PENDING':
-      return context.colors.GetColor('BLACK', 7)
+      return context.colors.GetColor('BLACK', 'MAGENTA')
     if status == 'SUCCESS':
       return context.colors.GetColor('BLACK', 'GREEN')
     if status == 'FAILURE':
@@ -84,18 +94,25 @@ class CRTryjobs(UI.NormalWindow):
         continue
 
   def RepaintInitial(self, context):
-    revision = context.cr.revisions[context.cr.current_revision]
-    cq = libgerrit.GetCQStatus(context.crnumber, revision._number)
-    if not cq.results.RAW:
-      self.WriteString(1, 1, 'No tryjobs')
+    try:
+      revision = context.cr.revisions[context.cr.current_revision]
+    except:
+      self.errmsg = 'No revision'
+      context.terminal.PaintWindow(self)
       return
-
-    if not self.tryjobs:
-      self.GetTryjobsList(cq, context)
-
+    try:
+      cq = libgerrit.GetCQStatus(context.crnumber, revision._number)
+    except:
+      self.errmsg = 'No CQ Started'
+      context.terminal.PaintWindow(self)
+      return
+    if not cq.results.RAW:
+      self.errmsg = 'No CQ Started'
+      context.terminal.PaintWindow(self)
+      return
+    self.GetTryjobsList(cq, context)
     self.setupthread = 'Finished'
     context.terminal.PaintWindow(self)
-
 
   def Repaint(self, context):
     if self.setupthread is None:
@@ -105,7 +122,7 @@ class CRTryjobs(UI.NormalWindow):
       self.WriteString(1, 1, 'Querying CQ')
       return
 
-    if self.setupthread == 'Finished':
+    elif self.setupthread == 'Finished':
       if not self.tryjobs:
         self.WriteString(1, 1, 'No tryjobs')
         return
@@ -115,6 +132,8 @@ class CRTryjobs(UI.NormalWindow):
         if line < self.Height():
           self.WriteString(1, line, data['name'], self.ColorForStatus(
             context, data['status']))
+    else:
+      self.WriteString(1, 1, self.errmsg)
 
 
 class CRComments(UI.ScrollWindow):
@@ -144,8 +163,10 @@ class CRComments(UI.ScrollWindow):
           author_revision_file[author] = author_revision_file.get(author, {})
           auth_dict = author_revision_file[author]
           auth_dict[comment.patch_set] = auth_dict.get(comment.patch_set, {})
-          auth_dict[comment.patch_set][file] = auth_dict[comment.patch_set].get(file, [])
-          auth_dict[comment.patch_set][file].append((comment.line, comment.message))
+          auth_dict[comment.patch_set][file] = auth_dict[comment.patch_set].get(
+            file, [])
+          auth_dict[comment.patch_set][file].append(
+            (comment.line, comment.message))
       self.fetch_message = 'Parsed Files And Revision'
     except:
       self.fetch_message = 'File & Revision Parsing Failed'
@@ -153,12 +174,20 @@ class CRComments(UI.ScrollWindow):
       return
 
     def WriteLineAndExpand(line, hpos, *args):
-      self.comments_lines.append((line, hpos, args))
+      if len(line) > self.Width() - hpos:
+        cut = self.Width() - hpos
+        while line[cut] != ' ':
+          cut -= 1
+        WriteLineAndExpand(line[0:cut], hpos, *args)
+        WriteLineAndExpand(line[cut+1:], hpos, *args)
+      else:
+        self.comments_lines.append((line, hpos, args))
 
     for m in context.cr.messages[::-1]:
       try:
         writelines = len(m.message.split('\n'))
-        WriteLineAndExpand(f'{m.author.name}:', 1, context.colors.GetColor(8, 6))
+        WriteLineAndExpand(
+          f'{m.author.name}:', 1, context.colors.GetColor(6, 8))
         for l in m.message.split('\n'):
           if l.strip():
             WriteLineAndExpand(l, 1)
@@ -168,7 +197,8 @@ class CRComments(UI.ScrollWindow):
         return
 
       try:
-        files = author_revision_file.get(m.author.name, {}).get(m._revision_number, {})
+        files = author_revision_file.get(m.author.name, {}).get(
+          m._revision_number, {})
         for file, cmts in files.items():
           WriteLineAndExpand(file + ':', 2, context.colors.GetColor(7, 8))
           for comment in cmts:
@@ -198,11 +228,28 @@ class CRComments(UI.ScrollWindow):
       self.WriteString(1, 1, f'Fetching Comments: {self.fetch_message}')
 
 
+def GetCLId():
+  if len(sys.argv) > 1:
+    return sys.argv[1]
+
+  r = librun.RunCommand('git cl issue')
+  if r.returncode:
+    raise ValueError('Can\'t run `git cl issue` here')
+
+  cl_id_regex = r':\s([0-9]+)\s'
+  clid = re.search(cl_id_regex, r.stdout)
+
+  if clid:
+    return clid.group(1)
+  else:
+    raise ValueError('Couldn\'t get bot statuses for {}'.format(clid))
+
+
 class Context(object):
   __slots__ = ('crnumber', 'cr', 'colors', 'terminal')
-  def __init__(self):
-    self.crnumber = 1875517
-    self.cr = libgerrit.GetReviewDetail(f'{self.crnumber}')
+  def __init__(self, crnumber):
+    self.crnumber = crnumber
+    self.cr = libgerrit.GetReviewDetail(f'{crnumber}')
     self.colors = None
     self.terminal = None
 
@@ -213,6 +260,6 @@ windows = (('30', '6', CRStatus),
            ('...', '...', CRComments))
 
 
-with UI.Terminal(windows, Context()) as c:
+with UI.Terminal(windows, Context(GetCLId())) as c:
   c.Start()
   c.WaitUntilEnded()
