@@ -7,8 +7,10 @@ PRIMITIVES = {
   "integer": int,
   "number": float,
   "boolean": bool,
-  "string": str,
-  "binary": bytes
+  "binary": bytes,
+  "string": None,
+  "object": None,
+  "array": None
 }
 
 
@@ -32,185 +34,302 @@ class TokenStreamer(object):
         yield CommentToken(stripline[1:].strip())
       else:
         yield IndentationToken(indentation)
-        print(stripline)
         for token in stripline.split(' '):
           yield StrToken(token)
 
 
-def R(C, T, S, ____):
-  kill = str(T)
-  for _ in range(10):
-    kill += f'\n{str(next(S))}'
-  raise ValueError(kill + str(C))
+def BuildTreeFromFile(filecontents):
+  return BuildTree(TokenStreamer(filecontents).Iterate())
 
 
-def P(*_, **__):
-  pass
-
-
-class IndentationJump(Exception):
-  def __init__(self, indent):
-    super().__init__(str(indent))
-    self.indent = indent
-
-
-def IterateHandler(stream, directives, base_indent=0):
-  print(f'Iterating stream [{base_indent}] {directives}')
-  current_stack_context = {}
-  read_any_data = False
-  current_indent = base_indent
+def BuildTree(stream, indent=0):
+  nodes = []
+  current_line = []
   try:
     while True:
       token = next(stream)
-      if type(token) == IndentationToken:
-        current_indent = token.indentation
-        if current_indent < base_indent:
-          raise IndentationJump(current_indent)
+      if type(token) == CommentToken:
+        continue
+      elif type(token) == StrToken:
+        current_line.append(token.value)
+      elif type(token) == IndentationToken:
+        nextindent = token.indentation
+        if nextindent > indent:
+          nextindent, subtree = BuildTree(stream, token.indentation)
+          current_line.append(subtree)
+        if nextindent <= indent:
+          if current_line:
+            nodes.append(current_line)
+          current_line = []
+        if nextindent < indent:
+          return nextindent, nodes
       else:
-        read_any_data = token
-        is_exempt_from_jump = False
-        try:
-          directives.get(type(token), R)(
-            current_stack_context, token, stream, current_indent)
-        except IndentationJump as jump:
-          print(f'Captured jump({jump.indent}) - {base_indent} {directives}')
-          if jump.indent == 0 and base_indent == -1:
-            is_exempt_from_jump = True
-          elif jump.indent == base_indent:
-            is_exempt_from_jump = True
-          else:
-            raise jump
-        except:
-          R(current_stack_context, token, stream, current_indent)
+        raise ValueError(str(token))
   except StopIteration:
-    return current_stack_context
+    if current_line:
+      nodes.append(current_line)
+    return indent, nodes
   else:
     raise ValueError('Should not have happened...')
 
 
-def _DropComment(_, token, __, ___):
-  #print(f'Comment ===>  {token.message}')
-  pass
+class Container(type):
+  def __new__(cls, name, bases, dct):
+    x = super().__new__(cls, name, bases, dct)
+    x.Construct = cls.Construct(name)
+    cls.name = name
+    return x
+
+  def __or__(cls, other):
+    return GreedyTypeSelector([cls(), other()])
+
+  def Construct(name):
+    def _Construct(self, **kwargs):
+      return namedtuple(name, kwargs.keys())(**kwargs)
+    return _Construct
 
 
-def SetDefaultFields(ctx, **kwargs):
-  for k, v in kwargs.items():
-    if k not in ctx:
-      ctx[k] = v
+class GreedyTypeSelector(object):
+  def __init__(self, types):
+    self.types = types
+
+  def __or__(self, other):
+    if isinstance(other, GreedyTypeSelector):
+      return GreedyTypeSelector(self.types + other.types)
+    if type(other) == Container:
+      return GreedyTypeSelector(self.types + [other()])
+
+  def __call__(self):
+    return self
+
+  def Parse(self, tree, debug=False):
+    result = {}
+    for t in self.types:
+      result[t.__class__.__name__] = []
+
+    for each in tree:
+      computed = self._Parse(each, debug=debug)
+      result[computed.__class__.__name__].append(computed)
+
+    for t in list(result.keys()):
+      if result[t] == []:
+        del result[t]
+    return result
+
+  def _Parse(self, tree, deubg=False):
+    for t in self.types:
+      x = t.Parse(tree, debug=debug)
+      if x is not None:
+        return x
+    raise ValueError(f'Unparsable - {tree} - {self.types}')
 
 
-def VersionAndDomains(context, token, stream, indent):
-  print(token.value)
-  if token.value == 'version':
-    return ReadVersion(context, stream, indent)
-  if token.value == 'experimental':
-    assert next(stream).value == 'domain'
-    print('domain')
-    return ReadDomain(context, stream, indent, is_experimental=True)
-  if token.value == 'domain':
-    return ReadDomain(context, stream, indent)
+class KeyValue(metaclass=Container):
+  def __init__(self, expected=None):
+    self.expected = expected
+
+  def Parse(self, tree, debug=False):
+    if len(tree) != 2:
+      return None
+    elif self.expected and tree[0] != self.expected:
+      return None
+    elif self.expected:
+      return self.Construct(value=tree[1])
+    else:
+      return self.Construct(key=tree[0], value=tree[1])
 
 
-def ReadVersion(context, stream, indent):
-  def _ReadMMVersion(ctx, tok, stm, idt):
-    print(tok.value)
-    assert tok.value == 'major' or tok.value == 'minor'
-    ctx[tok.value] = int(next(stm).value)
-    print(ctx[tok.value])
+class PDLContainer(metaclass=Container):
+  def __init__(self, name, subtypes, predicates=(), postfact=()):
+    if type(subtypes) == GreedyTypeSelector:
+      self.subtypes = subtypes
+    elif subtypes is not None:
+      self.subtypes = GreedyTypeSelector([subtypes()])
+    else:
+      self.subtypes = None
+    self.name = name
+    self.predicates = predicates
+    self.postfact = postfact
 
-  context['version'] = IterateHandler(stream, {
-    CommentToken: _DropComment,
-    StrToken: _ReadMMVersion
-  }, indent+2)
+  def GetPredicateMap(self, preds):
+    result = {}
+    for pred in preds:
+      if pred in self.predicates:
+        result[pred] = True
+      else:
+        raise ValueError(
+          f'Unparsable - {pred} not in {self.predicates}')
+    return result
 
+  def ParsePostfactData(self, settings, postfact_data):
+    if len(postfact_data) > len(self.postfact):
+      if type(self.postfact[-1]) == SaveAs:
+        postfact_data = postfact_data[len(self.postfact):]
+      else:
+        raise ValueError('postfact misalignment')
 
-def _ReadDomain(context, token, stream, indent):
-  SetDefaultFields(context, type=[], command=[], depends=[], event=[])
-  print(token.value)
-  if token.value == 'experimental':
-    next_token = next(stream)
-    domain_name = _ReadDomain(context, next_token, stream, indent)
-    context[domain_name][-1]['experimental'] = True
-    return domain_name
-  if token.value == 'deprecated':
-    next_token = next(stream)
-    domain_name = _ReadDomain(context, next_token, stream, indent)
-    context[domain_name][-1]['deprecated'] = True
-    return domain_name
+    for data, wants in zip(postfact_data, self.postfact):
+      if type(wants) == str:
+        if data != wants:
+          print(f'{data} != {wants}')
+          print(f'{postfact_data} --- {self.postfact}')
+          return False
+      elif type(wants) == SaveAs:
+        settings[wants.name] = data
+      else:
+        return False
+    return True
 
-  assert token.value != 'domain'
+  def DDEBUG(self, dbg, msg):
+    if dbg:
+      print(msg)
 
-  context[token.value].append({
-    'type': ReadType,
-    'command': ReadCommand,
-    'depends': ReadDepends,
-    'event': ReadEvent,
-  }[token.value](stream, indent))
+  def Parse(self, tree, debug=False):
+    if len(tree) == 0:
+      self.DDEBUG(debug, 'zero length tree')
+      return None
 
-  return token.value
+    if type(tree[-1]) == list:
+      subtypes = tree[-1]
+      tree = tree[:-1]
+    else:
+      subtypes = None
 
+    postfact_length = len(self.postfact)
+    minimum_viable_length = 1 + postfact_length
 
-def ReadDomain(context, stream, indent, is_experimental=False):
-  DomainName = next(stream).value
-  print(DomainName)
-  context[DomainName] = IterateHandler(stream, {
-    CommentToken: _DropComment,
-    StrToken: _ReadDomain
-  }, indent)
+    if len(tree) < minimum_viable_length:
+      self.DDEBUG(debug, 'Below minimum viable length')
+      return None
 
+    nameindex = tree.index(self.name)
+    if nameindex == -1:
+      self.DDEBUG(debug, f'{self.name} not found in {tree}')
+      return None
 
-def ReadType(stream, indent):
-  result = {}
-  result['typename'] = next(stream).value
-  print(result['typename'])
-  assert next(stream).value == 'extends'
-  result['extends'] = next(stream).value
-  result.update(IterateHandler(stream, {
-    CommentToken: _DropComment,
-    StrToken: P
-  }, indent))
-  return result
+    postfact_data = tree[nameindex+1:]
+    tree = tree[:1+nameindex]
 
-
-def ReadCommand(stream, indent):
-  result = {}
-  result['commandname'] = next(stream).value
-  print(result['commandname'])
-  result.update(IterateHandler(stream, {
-    CommentToken: _DropComment,
-    StrToken: P
-  }, indent))
-  return result
-
-def ReadEvent(stream, indent):
-  result = {}
-  result['eventname'] = next(stream).value
-  print(result['eventname'])
-  result.update(IterateHandler(stream, {
-    CommentToken: _DropComment,
-    StrToken: P
-  }, indent))
-  return result
-
-
-def ReadDepends(stream, indent):
-  result = {}
-  assert next(stream).value == 'on'
-  print('on')
-  result['depends_on'] = next(stream).value
-  print(result['depends_on'])
-  return result
+    settings = self.GetPredicateMap(tree[:-1])
+    if postfact_data:
+      if not self.ParsePostfactData(settings, postfact_data):
+        self.DDEBUG(debug, f'Couldnt parse postfact data')
+        return None
+    if subtypes:
+      if not self.subtypes:
+        raise ValueError(f'{self.__class__.__name__} needs subtypes!')
+      settings.update(self.subtypes.Parse(subtypes))
+    return self.Construct(**settings)
 
 
-def GetPDLContext(filecontents):
-  return IterateHandler(TokenStreamer(filecontents).Iterate(), {
-    CommentToken: _DropComment,
-    StrToken: VersionAndDomains,
-  })
+class SaveAs(object):
+  def __init__(self, name):
+    self.name = name
+
+
+class Token(metaclass=Container):
+  def Parse(self, tree, debug=False):
+    if len(tree) == 1 and type(tree[0]) == str:
+      return self.Construct(value=tree[0])
+    return None
+
+
+class TokenString(metaclass=Container):
+  def Parse(self, tree, debug=False):
+    return self.Construct(values=tree)
+
+
+class VersionMajor(KeyValue):
+  def __init__(self):
+    super().__init__('major')
+
+
+class VersionMinor(KeyValue):
+  def __init__(self):
+    super().__init__('minor')
+
+
+class PDLVersion(PDLContainer):
+  def __init__(self):
+    super().__init__('version',
+      VersionMajor|VersionMinor)
+
+
+class DomainDepends(PDLContainer):
+  def __init__(self):
+    super().__init__('depends', None,
+      postfact=('on', SaveAs('depends')))
+
+
+class DomainTypeEnum(PDLContainer):
+  def __init__(self):
+    super().__init__('enum', Token)
+
+
+class DomainTypeProperties(PDLContainer):
+  def __init__(self):
+    super().__init__('properties', TokenString)
+
+
+class DomainType(PDLContainer):
+  def __init__(self):
+    super().__init__('type', DomainTypeEnum|DomainTypeProperties,
+      predicates=('experimental', 'deprecated'),
+      postfact=(SaveAs('name'), 'extends', SaveAs('extends')))
+
+
+class Parameters(PDLContainer):
+  def __init__(self):
+    super().__init__('parameters', TokenString)
+
+
+class Returns(PDLContainer):
+  def __init__(self):
+    super().__init__('returns', TokenString)
+
+
+class DomainCommand(PDLContainer):
+  def __init__(self):
+    super().__init__('command', Parameters|Returns,
+      predicates=('experimental', 'deprecated'),
+      postfact=(SaveAs('name'),))
+
+
+class DomainEvent(PDLContainer):
+  def __init__(self):
+    super().__init__('event', Parameters,
+      predicates=('experimental', 'deprecated'),
+      postfact=(SaveAs('name'),))
+
+
+class PDLDomain(PDLContainer):
+  def __init__(self):
+    super().__init__('domain',
+      DomainDepends|DomainType|DomainCommand|DomainEvent,
+      predicates=('experimental', 'deprecated'),
+      postfact=(SaveAs('name'),))
+
+
+
+
 
 
 if __name__ == '__main__':
-  chrsrc = '/usr/local/google/home/tmathmeyer/chromium/src'
+  #chrsrc = '/usr/local/google/home/tmathmeyer/chromium/src'
   pdlpath = 'third_party/blink/renderer/core/inspector/browser_protocol.pdl'
+  chrsrc = '/home/tmathmeyer/git/devtools/devtools-frontend/'
   with open(os.path.join(chrsrc, pdlpath), 'r') as f:
-    print(GetPDLContext(f.read()))
+    _, tree = BuildTreeFromFile(f.read())
+
+    PDLFile = PDLVersion|PDLDomain
+    #PDLFile.Parse(tree)
+    
+    #print(tree[0])
+    #print(PDLVersion().Parse(tree[0]))
+
+    #print(tree[-1])
+    #print(PDLDomain().Parse(tree[-1]))
+
+    print(DomainType().Parse([
+      'type', 'Quad', 'extends', 'array', 'of', 'number'
+    ], debug=True))
