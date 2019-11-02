@@ -1,16 +1,25 @@
 #!/usr/bin/env python3.8
 
-import os
 from flask import Flask, escape, request, send_from_directory, redirect
-import subprocess
-import requests
-import time
+import logging
 import json
-import websocket
+import os
+import re
+import requests
 import signal
+import subprocess
 import sys
+import time
+from urllib.parse import urlparse
+import websocket
+
+from lib import libpen
+
 
 app = Flask(__name__)
+log = logging.getLogger('werkzeug')
+log.disabled = True
+
 
 request_id = 0
 def ChromeComm(conn, method, **kwargs):
@@ -28,7 +37,7 @@ def ChromeComm(conn, method, **kwargs):
           print('fuck ---')
 
 
-def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None):
+def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None, host='127.0.0.1'):
   devtools_src = os.path.join(
     os.environ['CHROMIUM_SRC'],
     'out', outdir,
@@ -38,16 +47,18 @@ def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None):
     chromeflags = []
 
   def StartChrome():
-    browser_proc = subprocess.Popen(
-      [os.path.join(os.environ['CHROMIUM_SRC'], 'out', outdir, 'chrome'),
+    chrome_process_flags = [
+       os.path.join(os.environ['CHROMIUM_SRC'], 'out', outdir, 'chrome'),
        '--headless',
-       f'--remote-debugging-port={debugger_port}'] + chromeflags)
+       f'--remote-debugging-address={host}',
+       f'--remote-debugging-port={debugger_port}'] + chromeflags
+    print(f'Starting chrome as: \n{chrome_process_flags}')
+    browser_proc = subprocess.Popen(chrome_process_flags)
     wait_seconds = 10
     sleep_seconds = 0.5
     while wait_seconds > 0:
       try:
         resp = requests.get(f'http://127.0.0.1:{debugger_port}/json').json()
-        print(resp)
         return (browser_proc,
                 websocket.create_connection(resp[0]['webSocketDebuggerUrl']),
                 resp[0]['id'])
@@ -55,11 +66,22 @@ def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None):
         time.sleep(sleep_seconds)
         wait_seconds -= sleep_seconds
       except:
-        print('FUCK')
         raise
 
   proc, chromeconn, page_id = StartChrome()
-  devtools_url = f'127.0.0.1:{debugger_port}/devtools/page/{page_id}'
+
+  def IsIP(netloc):
+    return re.match(r'\d+\.\d+\.\d+\.\d+', netloc)
+
+  def GetDevtoolsWss(requrl, page):
+    parsed = urlparse(requrl)
+    if IsIP(parsed.netloc):
+      return f'{parsed.netloc}:{debugger_port}/devtools/page/{page}'
+    if 'proxy.googleprod.com' in parsed.netloc:
+      parsed = libpen.PenEncoded.FromEncoded(parsed.netloc.split('.')[0])
+      parsed = parsed.WithPort(int(debugger_port))
+      return f'{parsed.Encode()}.proxy.googleprod.com/devtools/page/{page}'
+    raise ValueError(f'Cant get devtools WSS from {requrl}, {page}')
 
   def hijackJS():
     tabs = request.args.get('tabs')
@@ -76,6 +98,7 @@ def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None):
 
   @app.route('/')
   def rewrite():
+    devtools_url = GetDevtoolsWss(request.url_root, page_id)
     has_experiments = (request.args.get('experiments') == 'true')
     has_ws = (request.args.get('pid') == page_id)
     has_tabs = request.args.get('tabs')
@@ -84,7 +107,7 @@ def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None):
       newurl = request.url_root + '?'
       if has_tabs:
         newurl += f'tabs={has_tabs}'
-      newurl += f'&experiments=true&ws={devtools_url}&pid={page_id}'
+      newurl += f'&experiments=true&wss={devtools_url}&pid={page_id}'
       return redirect(newurl, code=302)
     with open(os.path.join(devtools_src, 'devtools_app.html'), 'r') as f:
       textual = f.read()
@@ -121,9 +144,11 @@ class FlObAr(object):
       self.SetBoolFlag(was_prev_a_flag)
 
   def SetBoolFlag(self, flag):
-    setattr(self, flag, True)
+    self.SetValueFlag(flag, True)
 
   def SetValueFlag(self, flag, value):
+    while flag.startswith('-'):
+      flag = flag[1:]
     setattr(self, flag, value)
 
 
@@ -132,8 +157,8 @@ class DevDevArgs(FlObAr):
     super().__init__()
 
   def GetChromeFeatureFlag(self):
-    if hasattr(self, 'chrome-flags'):
-      return f'--enable-features={",".join(getattr(self, "chrome-flags"))}'
+    if hasattr(self, 'chrome-features'):
+      return f'--enable-features={getattr(self, "chrome-features")}'
     return ''
 
   def GetPort(self, default=9001):
@@ -151,8 +176,10 @@ class DevDevArgs(FlObAr):
       return self.outdir
     return 'Default'
 
-
-
+  def GetHost(self):
+    if hasattr(self, 'host'):
+      return self.host
+    return '127.0.0.1'
 
 
 def RunItAll():
@@ -174,17 +201,16 @@ def RunItAll():
 
   proc, conn = RunFromOutDir(
     args.GetOutDir(),
-    args.GetPort(),
-    [args.GetChromeFeatureFlag()])
+    debugger_port=args.GetPort(),
+    host=args.GetHost(),
+    chromeflags=[args.GetChromeFeatureFlag()])
   print('  ==> Chrome Headless Started')
 
-
-  ChromeComm(conn, 'Page.navigate', url=args.GetUrl())
+  print(f'  ==> Navigating to {args.GetUrl()}')
+  print(ChromeComm(conn, 'Page.navigate', url=args.GetUrl()))
   print('  ==> Navigation complete')
-
-  app.run()
-
-
+  
+  app.run(host=args.GetHost())
 
 
 if __name__ == '__main__':
