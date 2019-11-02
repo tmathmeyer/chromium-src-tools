@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3.8
 
 # chromium build script!
 
@@ -512,7 +512,7 @@ def update():
 def clusterfuzz(*args):
   CF_BINARY = '/google/data/ro/teams/clusterfuzz-tools/releases/clusterfuzz'
   for cf_testcase in args:
-    cmd = f'{CF_BINARY} reproduce {cf_testcase}'
+    cmd = f'{CF_BINARY} reproduce {cf_testcase} --current'
     os.system(cmd)
 
 

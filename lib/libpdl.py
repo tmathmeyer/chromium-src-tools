@@ -116,7 +116,7 @@ class GreedyTypeSelector(object):
         del result[t]
     return result
 
-  def _Parse(self, tree, deubg=False):
+  def _Parse(self, tree, debug=False):
     for t in self.types:
       x = t.Parse(tree, debug=debug)
       if x is not None:
@@ -164,7 +164,9 @@ class PDLContainer(metaclass=Container):
   def ParsePostfactData(self, settings, postfact_data):
     if len(postfact_data) > len(self.postfact):
       if type(self.postfact[-1]) == SaveAs:
-        postfact_data = postfact_data[len(self.postfact):]
+        postfact_data = postfact_data[:len(self.postfact)-1] + [
+          postfact_data[len(self.postfact)-1:]
+        ]
       else:
         raise ValueError('postfact misalignment')
 
@@ -201,9 +203,9 @@ class PDLContainer(metaclass=Container):
     if len(tree) < minimum_viable_length:
       self.DDEBUG(debug, 'Below minimum viable length')
       return None
-
-    nameindex = tree.index(self.name)
-    if nameindex == -1:
+    try:
+      nameindex = tree.index(self.name)
+    except ValueError:
       self.DDEBUG(debug, f'{self.name} not found in {tree}')
       return None
 
@@ -213,7 +215,7 @@ class PDLContainer(metaclass=Container):
     settings = self.GetPredicateMap(tree[:-1])
     if postfact_data:
       if not self.ParsePostfactData(settings, postfact_data):
-        self.DDEBUG(debug, f'Couldnt parse postfact data')
+        self.DDEBUG(debug, f'Couldnt parse postfact data {postfact_data}')
         return None
     if subtypes:
       if not self.subtypes:
@@ -288,9 +290,15 @@ class Returns(PDLContainer):
     super().__init__('returns', TokenString)
 
 
+class Redirect(PDLContainer):
+  def __init__(self):
+    super().__init__('redirect', None,
+      postfact=(SaveAs('redirect'),))
+
+
 class DomainCommand(PDLContainer):
   def __init__(self):
-    super().__init__('command', Parameters|Returns,
+    super().__init__('command', Parameters|Returns|Redirect,
       predicates=('experimental', 'deprecated'),
       postfact=(SaveAs('name'),))
 
@@ -310,26 +318,65 @@ class PDLDomain(PDLContainer):
       postfact=(SaveAs('name'),))
 
 
+class PDLDomainWrapper(object):
+  def __init__(self, pdl_domain):
+    remap = ('DomainType', 'DomainCommand', 'DomainEvent')
+    for key in pdl_domain._fields:
+      if key == 'DomainDepends':
+        self.depends_on = pdl_domain.DomainDepends
+      elif key == 'DomainType':
+        for command in pdl_domain.DomainType:
+          setattr(self, command.name, command)  # TODO remap here!
+      elif key == 'DomainCommand':
+        for command in pdl_domain.DomainCommand:
+          setattr(self, command.name, command)  # TODO remap here!
+      elif key == 'DomainEvent':
+        for command in pdl_domain.DomainEvent:
+          setattr(self, command.name, command)  # TODO remap here!
+      else:
+        self.key = getattr(pdl_domain, key)
 
 
+
+class PDLFile(object):
+  def __init__(self):
+    self._pdl_version = None
+    self._pdl_domains = None
+
+  def ParseFileContents(self, cont):
+    _, tree = BuildTreeFromFile(cont)
+    self.ParseTree(tree)
+
+  def ParseFilePath(self, loc):
+    with open(loc, 'r') as f:
+      self.ParseFileContents(f.read())
+
+  def ParseTree(self, tree):
+    pdl_contents = (PDLVersion|PDLDomain).Parse(tree)
+    self._pdl_version = pdl_contents['PDLVersion'][0]
+    self._pdl_domains = {
+      dom.name: dom for dom in pdl_contents['PDLDomain']
+    }
+
+  def __getattr__(self, attr):
+    if attr == 'version':
+      return self._pdl_version
+    return PDLDomainWrapper(self._pdl_domains[attr])
+
+
+
+
+class Defaults(object):
+  def __init__(self):
+    self.src = '/usr/local/google/home/tmathmeyer/chromium/src'
+    self.pdl = 'third_party/blink/renderer/core/inspector/browser_protocol.pdl'
+    #chrsrc = '/home/tmathmeyer/git/devtools/devtools-frontend/'
+
+  def Parse(self):
+    result = PDLFile()
+    result.ParseFilePath(os.path.join(self.src, self.pdl))
+    return result
 
 
 if __name__ == '__main__':
-  #chrsrc = '/usr/local/google/home/tmathmeyer/chromium/src'
-  pdlpath = 'third_party/blink/renderer/core/inspector/browser_protocol.pdl'
-  chrsrc = '/home/tmathmeyer/git/devtools/devtools-frontend/'
-  with open(os.path.join(chrsrc, pdlpath), 'r') as f:
-    _, tree = BuildTreeFromFile(f.read())
-
-    PDLFile = PDLVersion|PDLDomain
-    #PDLFile.Parse(tree)
-    
-    #print(tree[0])
-    #print(PDLVersion().Parse(tree[0]))
-
-    #print(tree[-1])
-    #print(PDLDomain().Parse(tree[-1]))
-
-    print(DomainType().Parse([
-      'type', 'Quad', 'extends', 'array', 'of', 'number'
-    ], debug=True))
+  pdl = Defaults().Parse()
