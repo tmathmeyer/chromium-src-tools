@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3
 
 from flask import Flask, escape, request, send_from_directory, redirect
 import logging
@@ -19,6 +19,7 @@ from lib import libpen
 app = Flask(__name__)
 log = logging.getLogger('werkzeug')
 log.disabled = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 
 request_id = 0
@@ -37,19 +38,18 @@ def ChromeComm(conn, method, **kwargs):
           print('fuck ---')
 
 
-def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None, host='127.0.0.1'):
-  devtools_src = os.path.join(
-    os.environ['CHROMIUM_SRC'],
-    'out', outdir,
-    'resources', 'inspector')
+def RunFromOutDir(devtools_src=None,
+                  chromiumbinary=None,
+                  debugger_port=5001,
+                  chromeflags=None,
+                  host='127.0.0.1'):
 
   if chromeflags is None:
     chromeflags = []
 
   def StartChrome():
     chrome_process_flags = [
-       os.path.join(os.environ['CHROMIUM_SRC'], 'out', outdir, 'chrome'),
-       '--headless',
+       chromiumbinary, '--headless',
        f'--remote-debugging-address={host}',
        f'--remote-debugging-port={debugger_port}'] + chromeflags
     print(f'Starting chrome as: \n{chrome_process_flags}')
@@ -75,12 +75,15 @@ def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None, host='127.0.0.1'
 
   def GetDevtoolsWss(requrl, page):
     parsed = urlparse(requrl)
-    if IsIP(parsed.netloc):
-      return f'{parsed.netloc}:{debugger_port}/devtools/page/{page}'
-    if 'proxy.googleprod.com' in parsed.netloc:
-      parsed = libpen.PenEncoded.FromEncoded(parsed.netloc.split('.')[0])
+    netloc, netport = parsed.netloc.split(':')
+    if IsIP(netloc):
+      return f'{netloc}:{debugger_port}/devtools/page/{page}'
+    if 'proxy.googleprod.com' in netloc:
+      parsed = libpen.PenEncoded.FromEncoded(netloc.split('.')[0])
       parsed = parsed.WithPort(int(debugger_port))
       return f'{parsed.Encode()}.proxy.googleprod.com/devtools/page/{page}'
+    if 'localhost' in netloc:
+      return f'{netloc}:{debugger_port}/devtools/page/{page}'
     raise ValueError(f'Cant get devtools WSS from {requrl}, {page}')
 
   def hijackJS():
@@ -107,7 +110,7 @@ def RunFromOutDir(outdir, debugger_port=5001, chromeflags=None, host='127.0.0.1'
       newurl = request.url_root + '?'
       if has_tabs:
         newurl += f'tabs={has_tabs}'
-      newurl += f'&experiments=true&wss={devtools_url}&pid={page_id}'
+      newurl += f'&experiments=true&ws={devtools_url}&pid={page_id}'
       return redirect(newurl, code=302)
     with open(os.path.join(devtools_src, 'devtools_app.html'), 'r') as f:
       textual = f.read()
@@ -181,6 +184,21 @@ class DevDevArgs(FlObAr):
       return self.host
     return '127.0.0.1'
 
+  def GetDevtoolsSrc(self):
+    if hasattr(self, 'srcs'):
+      return self.srcs
+    return os.path.join(
+      os.environ['CHROMIUM_SRC'],
+      'out', self.GetOutDir(),
+      'resources', 'inspector')
+
+  def GetChromiumBinary(self):
+    if hasattr(self, 'binary'):
+      return self.binary
+    return os.path.join(
+      os.environ['CHROMIUM_SRC'],
+      'out', self.GetOutDir(), 'chrome')
+
 
 def RunItAll():
   proc = None,
@@ -200,7 +218,8 @@ def RunItAll():
   print('  ==> Args Parsed')
 
   proc, conn = RunFromOutDir(
-    args.GetOutDir(),
+    devtools_src=args.GetDevtoolsSrc(),
+    chromiumbinary=args.GetChromiumBinary(),
     debugger_port=args.GetPort(),
     host=args.GetHost(),
     chromeflags=[args.GetChromeFeatureFlag()])
