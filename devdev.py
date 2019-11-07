@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.8
 
 from flask import Flask, escape, request, send_from_directory, redirect
 import logging
@@ -12,33 +12,72 @@ import sys
 import time
 from urllib.parse import urlparse
 import websocket
+from werkzeug.serving import WSGIRequestHandler
+
+from flask_socketio import SocketIO
+from socketIO_client import SocketIO as SocketIOClient
 
 from lib import libpen
 
 
-app = Flask(__name__)
-log = logging.getLogger('werkzeug')
-log.disabled = True
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+def createFlaskApp():
+  # Needs to happen before app is created!
+  WSGIRequestHandler.protocol_version = "HTTP/1.1"
+  app = Flask(__name__)
+  app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+  # make flask shut up.
+  log = logging.getLogger('werkzeug')
+  log.disabled = True
+  return app
 
 
-request_id = 0
-def ChromeComm(conn, method, **kwargs):
-    global request_id
-    request_id += 1
-    command = {'method': method,
-               'id': request_id,
-               'params': kwargs}
-    conn.send(json.dumps(command))
+def log(msg, level='status'):
+  color = ({
+    'info': 92,
+    'status': 95,
+    'warning': 93,
+    'error': 91
+  }).get(level, 94)
+  msg = str(msg)
+  msg = msg.replace("\n", "\n      ")
+  print(f'\033[{color}m  ==>\033[0m {msg}')
+
+
+class ChromeCommCall(object):
+  def __init__(self, n, comm):
+    self._comm = comm
+    self._n = n
+
+  def __getattr__(self, attr):
+    return ChromeCommCall(f'{self._n}.{attr}', self._comm)
+
+  def __call__(self, **kwargs):
+    return self._comm(self._n, kwargs)
+
+
+class ChromeComm(object):
+  def __init__(self, connection):
+    self._connection = connection
+    self._reqid = 0
+
+  def __getattr__(self, attr):
+    return ChromeCommCall(attr, self)
+
+  def __call__(self, method, params):
+    self._reqid += 1
+    self._connection.send(json.dumps({
+      'method':method, 'id':self._reqid, 'params':params}))
     while True:
-        msg = json.loads(conn.recv())
-        if msg.get('id') == request_id:
-            return msg
-        else:
-          print('fuck ---')
+      msg = json.loads(self._connection.recv())
+      if msg.get('id', None) == self._reqid:
+        return msg
+
+  def close(self):
+    self._connection.close()
 
 
-def RunFromOutDir(devtools_src=None,
+def RunFromOutDir(flaskapp,
+                  devtools_src=None,
                   chromiumbinary=None,
                   debugger_port=5001,
                   chromeflags=None,
@@ -52,7 +91,8 @@ def RunFromOutDir(devtools_src=None,
        chromiumbinary, '--headless',
        f'--remote-debugging-address={host}',
        f'--remote-debugging-port={debugger_port}'] + chromeflags
-    print(f'Starting chrome as: \n{chrome_process_flags}')
+    flagstr = '\n'.join(chrome_process_flags)
+    log(f'Chrome flags:\n{flagstr}', level='info')
     browser_proc = subprocess.Popen(chrome_process_flags)
     wait_seconds = 10
     sleep_seconds = 0.5
@@ -67,6 +107,7 @@ def RunFromOutDir(devtools_src=None,
         wait_seconds -= sleep_seconds
       except:
         raise
+    raise 'Chrome not starting!'
 
   proc, chromeconn, page_id = StartChrome()
 
@@ -75,15 +116,15 @@ def RunFromOutDir(devtools_src=None,
 
   def GetDevtoolsWss(requrl, page):
     parsed = urlparse(requrl)
-    netloc, netport = parsed.netloc.split(':')
+    netloc = parsed.netloc.split(':')[0]
     if IsIP(netloc):
-      return f'{netloc}:{debugger_port}/devtools/page/{page}'
+      return f'ws={netloc}:{debugger_port}/devtools/page/{page}'
     if 'proxy.googleprod.com' in netloc:
       parsed = libpen.PenEncoded.FromEncoded(netloc.split('.')[0])
       parsed = parsed.WithPort(int(debugger_port))
-      return f'{parsed.Encode()}.proxy.googleprod.com/devtools/page/{page}'
+      return f'wss={parsed.Encode()}.proxy.googleprod.com/devtools/page/{page}'
     if 'localhost' in netloc:
-      return f'{netloc}:{debugger_port}/devtools/page/{page}'
+      return f'ws={netloc}:{debugger_port}/devtools/page/{page}'
     raise ValueError(f'Cant get devtools WSS from {requrl}, {page}')
 
   def hijackJS():
@@ -99,7 +140,7 @@ def RunFromOutDir(devtools_src=None,
     result += '</script>'
     return result
 
-  @app.route('/')
+  @flaskapp.route('/')
   def rewrite():
     devtools_url = GetDevtoolsWss(request.url_root, page_id)
     has_experiments = (request.args.get('experiments') == 'true')
@@ -110,18 +151,18 @@ def RunFromOutDir(devtools_src=None,
       newurl = request.url_root + '?'
       if has_tabs:
         newurl += f'tabs={has_tabs}'
-      newurl += f'&experiments=true&ws={devtools_url}&pid={page_id}'
+      newurl += f'&experiments=true&{devtools_url}&pid={page_id}'
       return redirect(newurl, code=302)
     with open(os.path.join(devtools_src, 'devtools_app.html'), 'r') as f:
       textual = f.read()
       first_bit, second_bit = textual.split('</head>')
       return f'{first_bit}{hijackJS()}{second_bit}'
 
-  @app.route('/<path:path>')
+  @flaskapp.route('/<path:path>')
   def serve(path):
     return send_from_directory(devtools_src, path)
 
-  return proc, chromeconn
+  return proc, ChromeComm(chromeconn)
 
 
 class FlObAr(object):
@@ -205,31 +246,37 @@ def RunItAll():
   conn = None
   original = signal.getsignal(signal.SIGINT)
   def kill_me(num, fr):
+    print('')  # get newline after ^C
     signal.signal(signal.SIGINT, original)
     if proc:
       proc.terminate()
+      log('Headless Chrome terminated')
     if conn:
       conn.close()
+      log('Connections closed')
+    log('Exiting...')
     sys.exit()
   signal.signal(signal.SIGINT, kill_me)
-  print('  ==> Signals Up')
+  log('Signals Up')
 
   args = DevDevArgs()
-  print('  ==> Args Parsed')
+  log('Args Parsed')
 
+  flaskapp = createFlaskApp()
   proc, conn = RunFromOutDir(
+    flaskapp,
     devtools_src=args.GetDevtoolsSrc(),
     chromiumbinary=args.GetChromiumBinary(),
     debugger_port=args.GetPort(),
     host=args.GetHost(),
     chromeflags=[args.GetChromeFeatureFlag()])
-  print('  ==> Chrome Headless Started')
+  log('Chrome Headless Started')
 
-  print(f'  ==> Navigating to {args.GetUrl()}')
-  print(ChromeComm(conn, 'Page.navigate', url=args.GetUrl()))
-  print('  ==> Navigation complete')
-  
-  app.run(host=args.GetHost())
+  log(f'Navigating to {args.GetUrl()}')
+  log(conn.Page.navigate(url=args.GetUrl()), level='info')
+  log('Navigation complete')
+
+  flaskapp.run(host=args.GetHost())
 
 
 if __name__ == '__main__':
