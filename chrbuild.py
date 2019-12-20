@@ -20,6 +20,12 @@ CHROME_DIRECTORIES = [
 ]
 
 
+def RunCommand(command, stream_stdout=False):
+  return subprocess.run(command,
+                        encoding='utf-8',
+                        shell=True,
+                        stderr=subprocess.PIPE,
+                        stdout=(None if stream_stdout else subprocess.PIPE))
 
 class Complete():
   """Auto complet generator."""
@@ -43,11 +49,11 @@ class Complete():
         if k.startswith(sys.argv[3]):
           print(k)
     else:
-      self.run_func(self.fail, sys.argv[1], sys.argv[2:])
+      return self.run_func(self.fail, sys.argv[1], sys.argv[2:])
       #self.functions.get(sys.argv[1], self.fail())['func'](*sys.argv[2:])
 
   def run_func(self, onfail, name, args):
-    self.functions.get(name, onfail())['func'](*args)
+    return self.functions.get(name, onfail())['func'](*args)
 
   def fail(self):
     return {
@@ -91,8 +97,12 @@ class Build():
   def run(self, *args, **kwargs):
     if not os.path.isdir('{}/out/{}'.format(CHROME_DIRECTORY, self.base)):
       os.system('gn gen out/{} --check --args=\'{}\''.format(self.base, self.args()))
-    print('ninja -C out/{} {} -j{}'.format(self.base, self.target, self.j))
-    os.system('ninja -C out/{} {} -j{}'.format(self.base, self.target, self.j))
+    # TODO: return the stdout here!
+    cmd = f'ninja -C out/{self.base} {self.target} -j{self.j}'
+    print(cmd)
+    res = RunCommand(cmd, stream_stdout=True)
+    return res
+
 
 
 class NoBuild(Build):
@@ -105,20 +115,23 @@ class NoBuild(Build):
 
 
 RPC = 'https://cr-buildbucket.appspot.com/prpc/buildbucket.v2.Builds/GetBuild'
-FMT = r'https://ci\.chromium\.org/p/(\S+)/builders/(\S+)/(\S+)/([0-9]+)'
+FMT = r'https://ci\.chromium\.org/p/(\S+)/builders/(\S+)/(\S+)/([b]*[0-9]+)'
 PARSER = re.compile(FMT)
 
 def get_request_payload(url):
-  groups = PARSER.match(url).groups()
-  return {
-    'builder': {
-      'project': groups[0],
-      'bucket': groups[1],
-      'builder': groups[2],
-    },
-    'buildNumber': groups[3],
-    'fields': 'steps,id'
-  }
+  try:
+    groups = PARSER.match(url).groups()
+    return {
+      'builder': {
+        'project': groups[0],
+        'bucket': groups[1],
+        'builder': groups[2],
+      },
+      'buildNumber': groups[3],
+      'fields': 'steps,id'
+    }
+  except AttributeError:
+    raise ValueError(f'{FMT} could not match {url}')
 
 class BuildbotEntries(object):
   def __init__(self, url):
@@ -132,6 +145,7 @@ class BuildbotEntries(object):
         'accept': 'application/json'
       })
     if q.status_code != 200:
+      raise ValueError(f'RPC to {RPC} failed')
       self._json = {}
     else:
       self._json = json.loads(q.text[5:])
@@ -219,12 +233,38 @@ class BuildbotEntries(object):
 
 
 class MultiBuild():
-  def __init__(self, targets):
+  def __init__(self, targets, together=False):
     self.targets = targets
     self.base = 'Misc'
     self.gn_args = Build().default_args()
+    self._together = together
 
   def run(self, *args, **kwargs):
+    if self._together:
+      self._run_together(*args, **kwargs)
+    else:
+      self._run_apart(*args, **kwargs)
+
+  def _run_together(self, *args, **kwargs):
+    target = ' '.join(self.targets)
+    x = complete.run_func(lambda:{
+        'func': goma_build(lambda *args: Build(
+          target=target,
+          base=self.base,
+          gn_args=self.gn_args,
+          j=getattr(self, 'j', 2000)))
+    }, target, [])
+    if x.returncode == 1:
+      if x.stderr.startswith('ninja: error: unknown target'):
+        drop = x.stderr[30:-2]
+        print(f'Invalid target: {drop} --- retrying without it')
+        self.targets = set(self.targets)
+        self.targets.remove(drop)
+        self._run_together(*args, **kwargs)
+      else:
+        print(x.stderr)
+
+  def _run_apart(self, *args, **kwargs):
     total = len(self.targets)
     for i, target in enumerate(self.targets):
       print('Building: [{}/{}] {}'.format(i, total, target))
@@ -254,7 +294,7 @@ def buildbot(url, *jobs):
 
   bb = BuildbotEntries(url)
   jobs = jobs or bb.GetCompileTargets()
-  multibuild = MultiBuild(jobs)
+  multibuild = MultiBuild(jobs, together=True)
   multibuild.gn_args.update(bb.GetGNArgs())
   outdir = parsed.path.split('/')[-2].replace('_', '').upper()
   multibuild.base = 'BOT-' + outdir

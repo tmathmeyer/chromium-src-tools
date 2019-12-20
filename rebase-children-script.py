@@ -37,9 +37,11 @@ def main():
     if branch.name == 'master':
       continue
     librun.RunCommand(f'git checkout {branch.name}')
+    print(f' ==> Checked out {branch.name}')
     librun.RunCommand(f'git rebase')
     usr = 'N'
     while usr not in YES_VALUES:
+      print(librun.RunCommand(f'git status').stdout)
       usr = input('Rebase completed? [y/N]: ')
   librun.RunCommand(f'git checkout {CURRENT_BRANCH}')
 

@@ -1,5 +1,6 @@
 
-import html_parser
+
+from lib import libhtmlparse as html_parser
 import requests
 import sys
 
@@ -67,26 +68,11 @@ class MSApiPageParser(object):
       if not l.startswith(')') and l:
         t, n = l.rsplit(' ', 1)
         t = t.strip()
-        if n.startswith('*'):
+        while n.startswith('*'):
+          n = n[1:]
           t += '*'
         args.append(t)
     return rettype, args
-
-
-
-URL = "https://docs.microsoft.com/en-us/windows/desktop/api/d3d11/nn-d3d11-id3d11videodevice"
-
-def ParseCOMApiPage():
-  r = requests.get(URL)
-  extractor = html_parser.ParserExtracter(WITH_CLASS, NO_CLASS)
-  extractor.feed(r.text)
-  for capture in extractor:
-    data = capture.data[0]
-    if data[0].tag == 'a':
-      url = data[0].attrs[0][1]
-      com = data[1]
-      yield url, com
-
 
 
 p = MSApiPageParser(sys.argv[1])

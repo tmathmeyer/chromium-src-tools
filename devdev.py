@@ -1,8 +1,10 @@
 #!/usr/bin/env python3.8
 
+import asyncio
 from flask import Flask, escape, request, send_from_directory, redirect
-import logging
 import json
+import logging
+from multiprocessing import Process
 import os
 import re
 import requests
@@ -12,10 +14,8 @@ import sys
 import time
 from urllib.parse import urlparse
 import websocket
+import websockets
 from werkzeug.serving import WSGIRequestHandler
-
-from flask_socketio import SocketIO
-from socketIO_client import SocketIO as SocketIOClient
 
 from lib import libpen
 
@@ -65,8 +65,12 @@ class ChromeComm(object):
 
   def __call__(self, method, params):
     self._reqid += 1
-    self._connection.send(json.dumps({
-      'method':method, 'id':self._reqid, 'params':params}))
+    if params:
+      self._connection.send(json.dumps({
+        'method':method, 'id':self._reqid, 'params':params}))
+    else:
+      self._connection.send(json.dumps({
+        'method':method, 'id':self._reqid}))
     while True:
       msg = json.loads(self._connection.recv())
       if msg.get('id', None) == self._reqid:
@@ -76,93 +80,43 @@ class ChromeComm(object):
     self._connection.close()
 
 
-def RunFromOutDir(flaskapp,
-                  devtools_src=None,
-                  chromiumbinary=None,
-                  debugger_port=5001,
-                  chromeflags=None,
-                  host='127.0.0.1'):
+class WhatsAlive(Exception):
+  def __init__(self, chrome=False, connection=False):
+    super().__init__()
+    self.chrome = chrome
+    self.connection = connection
 
-  if chromeflags is None:
-    chromeflags = []
 
-  def StartChrome():
-    chrome_process_flags = [
-       chromiumbinary, '--headless',
-       f'--remote-debugging-address={host}',
-       f'--remote-debugging-port={debugger_port}'] + chromeflags
-    flagstr = '\n'.join(chrome_process_flags)
-    log(f'Chrome flags:\n{flagstr}', level='info')
-    browser_proc = subprocess.Popen(chrome_process_flags)
-    wait_seconds = 10
-    sleep_seconds = 0.5
-    while wait_seconds > 0:
-      try:
-        resp = requests.get(f'http://127.0.0.1:{debugger_port}/json').json()
-        return (browser_proc,
-                websocket.create_connection(resp[0]['webSocketDebuggerUrl']),
-                resp[0]['id'])
-      except requests.exceptions.ConnectionError:
-        time.sleep(sleep_seconds)
-        wait_seconds -= sleep_seconds
-      except:
-        raise
-    raise 'Chrome not starting!'
+def StartChrome(binary, port, flags):
+  host = '127.0.0.1'
+  chrome_process_flags = [
+     binary, '--headless',
+     f'--remote-debugging-address={host}',
+     f'--remote-debugging-port={port}'] + flags
+  flagstr = '\n'.join(chrome_process_flags)
+  log(f'Chrome flags:\n{flagstr}', level='info')
+  browser_proc = subprocess.Popen(chrome_process_flags)
+  wait_seconds = 30
+  sleep_seconds = 0.5
+  while wait_seconds > 0:
+    try:
+      resp = requests.get(f'http://{host}:{port}/json').json()
+      return (browser_proc,
+              websocket.create_connection(resp[0]['webSocketDebuggerUrl']),
+              resp[0]['id'])
+    except requests.exceptions.ConnectionError:
+      time.sleep(sleep_seconds)
+      wait_seconds -= sleep_seconds
+    except IndexError:
+      time.sleep(sleep_seconds)
+      wait_seconds -= sleep_seconds
+    except:
+      raise
+  raise WhatsAlive(chrome=True)
 
-  proc, chromeconn, page_id = StartChrome()
 
-  def IsIP(netloc):
-    return re.match(r'\d+\.\d+\.\d+\.\d+', netloc)
-
-  def GetDevtoolsWss(requrl, page):
-    parsed = urlparse(requrl)
-    netloc = parsed.netloc.split(':')[0]
-    if IsIP(netloc):
-      return f'ws={netloc}:{debugger_port}/devtools/page/{page}'
-    if 'proxy.googleprod.com' in netloc:
-      parsed = libpen.PenEncoded.FromEncoded(netloc.split('.')[0])
-      parsed = parsed.WithPort(int(debugger_port))
-      return f'wss={parsed.Encode()}.proxy.googleprod.com/devtools/page/{page}'
-    if 'localhost' in netloc:
-      return f'ws={netloc}:{debugger_port}/devtools/page/{page}'
-    raise ValueError(f'Cant get devtools WSS from {requrl}, {page}')
-
-  def hijackJS():
-    tabs = request.args.get('tabs')
-    result = '<script type="module">'
-    if tabs:
-      tabs = tabs.split(',')
-    else:
-      tabs = []
-    tabs.append('protocolMonitor')
-    for enable in tabs:
-      result += f"Root.Runtime.experiments.setEnabled('{enable}', true);"
-    result += '</script>'
-    return result
-
-  @flaskapp.route('/')
-  def rewrite():
-    devtools_url = GetDevtoolsWss(request.url_root, page_id)
-    has_experiments = (request.args.get('experiments') == 'true')
-    has_ws = (request.args.get('pid') == page_id)
-    has_tabs = request.args.get('tabs')
-
-    if not (has_experiments and has_ws):
-      newurl = request.url_root + '?'
-      if has_tabs:
-        newurl += f'tabs={has_tabs}'
-      newurl += f'&experiments=true&{devtools_url}&pid={page_id}'
-      return redirect(newurl, code=302)
-    with open(os.path.join(devtools_src, 'devtools_app.html'), 'r') as f:
-      textual = f.read()
-      first_bit, second_bit = textual.split('</head>')
-      return f'{first_bit}{hijackJS()}{second_bit}'
-
-  @flaskapp.route('/<path:path>')
-  def serve(path):
-    return send_from_directory(devtools_src, path)
-
-  return proc, ChromeComm(chromeconn)
+def IsIP(netloc):
+  return re.match(r'\d+\.\d+\.\d+\.\d+', netloc)
 
 
 class FlObAr(object):
@@ -241,9 +195,114 @@ class DevDevArgs(FlObAr):
       'out', self.GetOutDir(), 'chrome')
 
 
+def MakeWSProxy(comm, proxyport, pageid):
+  def startserver(com):
+    print(f'making WS proxy from :9001 -> :{proxyport}')
+    async def devtools(WS, path):
+      while True:
+        request = await WS.recv()
+        request = json.loads(request)
+        response = comm(request['method'], request.get('params', None))
+        response['id'] = request['id']
+        print(f'{request["id"]} => {response["id"]}')
+        await WS.send(json.dumps(response))
+    loop = asyncio.new_event_loop()
+    starts = websockets.serve(devtools, '0.0.0.0', proxyport, loop=loop)
+    loop.run_until_complete(starts)
+    loop.run_forever()
+    print('proxy dead')
+
+  server = Process(target=startserver, args=(comm,))
+  server.start()
+  os.system(f'curl http://localhost:{proxyport}/')
+  return server
+
+
+
+def GetDevtoolsWss(requrl, page, debugger_port, proxy, chromecomm):
+  absolve_me = False
+  if not proxy:
+    proxy['wsproxy'] = None
+    absolve_me = True
+
+  parsed = urlparse(requrl)
+  netloc = parsed.netloc.split(':')[0]
+  # Connect directly to chrome
+  if IsIP(netloc) or ('localhost' in netloc):
+    return f'ws={netloc}:{debugger_port}/devtools/page/{page}'
+
+  # This is some real bullshit
+  if 'proxy.googleprod.com' in netloc:
+    proxyport = debugger_port+1
+    if absolve_me:
+      proxy['wsproxy'] = MakeWSProxy(chromecomm, proxyport, page)
+    parsed = libpen.PenEncoded.FromEncoded(netloc.split('.')[0])
+    parsed = parsed.WithPort(int(proxyport))
+    return f'wss={parsed.Encode()}.proxy.googleprod.com/devtools/page/{page}'
+
+  raise ValueError(f'Cant get devtools WSS from {requrl}, {page}')
+
+
+def RunFromOutDir(flaskapp,
+                  devtools_src=None,
+                  chromiumbinary=None,
+                  debugger_port=5001,
+                  chromeflags=None,
+                  host='127.0.0.1'):
+  if None in (flaskapp, devtools_src, chromiumbinary, debugger_port, host):
+    raise WhatsAlive()
+
+  if chromeflags is None:
+    chromeflags = []
+
+  proc, chromeconn, page_id = StartChrome(
+    chromiumbinary, debugger_port, chromeflags)
+  maybeProxy = {}
+  chromeconn = ChromeComm(chromeconn)
+
+  def hijackJS():
+    tabs = request.args.get('tabs')
+    result = '<script type="module">'
+    if tabs:
+      tabs = tabs.split(',')
+    else:
+      tabs = []
+    tabs.append('protocolMonitor')
+    for enable in tabs:
+      result += f"Root.Runtime.experiments.setEnabled('{enable}', true);"
+    result += '</script>'
+    return result
+
+  @flaskapp.route('/')
+  def rewrite():
+    devtools_url = GetDevtoolsWss(
+      request.url_root, page_id, debugger_port, maybeProxy, chromeconn)
+    has_experiments = (request.args.get('experiments', None) != None)
+    has_ws = (request.args.get('pid') == page_id)
+    has_tabs = request.args.get('tabs')
+
+    if not (has_experiments and has_ws):
+      newurl = request.url_root + '?'
+      if has_tabs:
+        newurl += f'tabs={has_tabs}'
+      newurl += f'&experiments=true&{devtools_url}&pid={page_id}'
+      return redirect(newurl, code=302)
+    with open(os.path.join(devtools_src, 'devtools_app.html'), 'r') as f:
+      textual = f.read()
+      first_bit, second_bit = textual.split('</head>')
+      return f'{first_bit}{hijackJS()}{second_bit}'
+
+  @flaskapp.route('/<path:path>')
+  def serve(path):
+    return send_from_directory(devtools_src, path)
+
+  return proc, chromeconn, maybeProxy
+
+
 def RunItAll():
-  proc = None,
+  proc = None
   conn = None
+  proxy = None
   original = signal.getsignal(signal.SIGINT)
   def kill_me(num, fr):
     print('')  # get newline after ^C
@@ -254,6 +313,11 @@ def RunItAll():
     if conn:
       conn.close()
       log('Connections closed')
+    if proxy:
+      for p in proxy.values():
+        if p:
+          p.terminate()
+          p.join()
     log('Exiting...')
     sys.exit()
   signal.signal(signal.SIGINT, kill_me)
@@ -263,20 +327,23 @@ def RunItAll():
   log('Args Parsed')
 
   flaskapp = createFlaskApp()
-  proc, conn = RunFromOutDir(
-    flaskapp,
-    devtools_src=args.GetDevtoolsSrc(),
-    chromiumbinary=args.GetChromiumBinary(),
-    debugger_port=args.GetPort(),
-    host=args.GetHost(),
-    chromeflags=[args.GetChromeFeatureFlag()])
-  log('Chrome Headless Started')
+  try:
+    proc, conn, proxy = RunFromOutDir(
+      flaskapp,
+      devtools_src=args.GetDevtoolsSrc(),
+      chromiumbinary=args.GetChromiumBinary(),
+      debugger_port=args.GetPort(),
+      host=args.GetHost(),
+      chromeflags=[args.GetChromeFeatureFlag()])
+    log('Chrome Headless Started')
 
-  log(f'Navigating to {args.GetUrl()}')
-  log(conn.Page.navigate(url=args.GetUrl()), level='info')
-  log('Navigation complete')
+    log(f'Navigating to {args.GetUrl()}')
+    log(conn.Page.navigate(url=args.GetUrl()), level='info')
+    log('Navigation complete')
 
-  flaskapp.run(host=args.GetHost())
+    flaskapp.run(host=args.GetHost())
+  except WhatsAlive as alive:
+    kill_me()
 
 
 if __name__ == '__main__':
