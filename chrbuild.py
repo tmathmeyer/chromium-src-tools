@@ -49,6 +49,8 @@ class Complete():
         if k.startswith(sys.argv[3]):
           print(k)
     else:
+      # Ensure goma is running
+      os.system(f'{GOMA_DIR}/goma_ctl.py ensure_start 2>/dev/null > /dev/null')
       return self.run_func(self.fail, sys.argv[1], sys.argv[2:])
       #self.functions.get(sys.argv[1], self.fail())['func'](*sys.argv[2:])
 
@@ -441,7 +443,9 @@ def web_tests():
 @complete('media_unit_tests', 'build the media unit tests')
 @goma_build
 def media_unittests():
-  return Build(target='media_unittests', base='Tests')
+  return Build(target='media_unittests', base='Tests', gn_args={
+    'is_debug': 'true',
+  })
 
 @complete('content_browser_tests', 'build the content browser tests')
 @goma_build
@@ -558,9 +562,6 @@ def clusterfuzz(*args):
 
 
 if __name__ == '__main__':
-  # Ensure goma is running
-  os.system('{}/goma_ctl.py ensure_start 2>/dev/null > /dev/null'.format(GOMA_DIR))
-
   found = False
   for D in CHROME_DIRECTORIES:
     if os.getcwd() == D:

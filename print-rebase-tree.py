@@ -2,7 +2,7 @@
 
 import sys
 
-from lib import librun, libgitbranch
+from lib import librun, libgitbranch, liboutput, colors
 
 
 CURRENT_BRANCH = None
@@ -14,28 +14,28 @@ def setup():
   if CURRENT_BRANCH.returncode:
     raise ValueError('Not in a git repository')
 
+def disp_branch(branch):
+  result = ''
+  if branch.checked_out:
+    result += colors.Color(colors.GREEN)
 
-def branch_to_string(branch, i, counts):
-  if i == 0:
-    return branch.name
-  preline = '│ ' * (i - 1)
-  if counts.Num == counts.Of:
-    preline += '└'
-  else:
-    preline += '├'
-  preline += '─'
-  return preline + branch.name
+  if branch.getAhead() == 0:
+    result += colors.Color(colors.PURPLE)
+
+  gerrit = getattr(branch, 'gerritissue', '')
+  result += branch.name
+  result += f' [{gerrit}]'
+
+  result += colors.Color()
+  return result
 
 
 def main():
   # These commands are non-destructive, so run them regardless
   setup()
   master = libgitbranch.Branch.ReadGitRepo().get('master', None)
-  if not master:
-    raise ValueError('No master branch!')
-
-  for branch in master.TreeItr(fn=branch_to_string, skip_subtrees_on_empty_ret=True):
-    print(branch)
+  liboutput.PrintTree(
+    master, render=disp_branch, charset=liboutput.BOLD_BOX_CHARACTERS)
 
 if __name__ == '__main__':
   main()

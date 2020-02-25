@@ -38,7 +38,10 @@ class Window(object, metaclass=abc.ABCMeta):
 
   def Paint(self, context):
     self._window.clear()
-    self.Repaint(context)
+    try:
+      self.Repaint(context)
+    except Exception as e:
+      self.WriteString(0, 0, str(e))
     self.Redecorate()
 
   def WriteString(self, x, y, string, *args):
