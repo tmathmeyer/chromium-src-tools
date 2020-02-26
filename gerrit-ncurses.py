@@ -52,8 +52,7 @@ class CRTryjobs(UI.NormalWindow):
       boturl = self.tryjobs[buildername]['url']
       status = libgerrit.GetBuildbotData(boturl, fields='status').status
       self.tryjobs[buildername]['status'] = status
-    except:
-      self.tryjobs[buildername]['name'] = 'ERROR'
+    except Exception as e:
       self.tryjobs[buildername]['status'] = 'ERROR'
     terminal.PaintWindow(self)
 
@@ -229,7 +228,7 @@ class CRComments(UI.ScrollWindow):
 
 
 def GetCLId():
-  if len(sys.argv) > 1:
+  if len(sys.argv) > 1 and sys.argv[1] != '--debug':
     return sys.argv[1]
 
   r = librun.RunCommand('git cl issue')
@@ -254,12 +253,41 @@ class Context(object):
     self.terminal = None
 
 
-windows = (('30', '6', CRStatus),
-           ('...', '10', CRMessage),
-           ('30', '...', CRTryjobs),
-           ('...', '...', CRComments))
+
+def main():
+  windows = (('30', '6', CRStatus),
+             ('...', '10', CRMessage),
+             ('30', '...', CRTryjobs),
+             ('...', '...', CRComments))
 
 
-with UI.Terminal(windows, Context(GetCLId())) as c:
-  c.Start()
-  c.WaitUntilEnded()
+  with UI.Terminal(windows, Context(GetCLId())) as c:
+    c.Start()
+    c.WaitUntilEnded()
+
+
+def debug_main():
+  context = Context(GetCLId())
+  revision = context.cr.revisions[context.cr.current_revision]
+  cq = libgerrit.GetCQStatus(context.crnumber, revision._number)
+  def BotQuery(botname, boturl):
+    try:
+      status = libgerrit.GetBuildbotData(boturl, fields='status').status
+      print(f'{botname} :: {status}')
+    except Exception as e:
+      print(f'Ex {botname} :: {e}')
+
+  for result in cq.results[::-1]:
+    try:
+      for idx, p in enumerate(result.fields.jobs.JOB_PENDING):
+        threading.Thread(target=BotQuery, args=(p.builder, p.url)).start()
+      return
+    except:
+      continue
+
+
+if __name__ == '__main__':
+  if '--debug' in sys.argv:
+    debug_main()
+  else:
+    main()

@@ -13,7 +13,9 @@ CRREV_DETAIL_URL_O = 'https://chromium-review.googlesource.com/changes/{}/detail
 PATCHSET_STATUS_URL = ('https://chromium-cq-status.appspot.com/query/codereview'
                        '_hostname=chromium-review.googlesource.com/issue={}/'
                        'patchset={}')
+HOSTNAME_REGEX = re.compile(r'https://([a-zA-Z0-9\.\-]+)/.*')
 BUILDBOT_URL_REGEX = re.compile(r'p/(\S+)/builders/(\S+)/(\S+)/([0-9]+)')
+BUILDBOT_GENID_REGEX = re.compile(r'https://ci.chromium.org/b/([0-9]+)')
 BUILDBOT_RPC_URL = 'https://cr-buildbucket.appspot.com/prpc/buildbucket.v2.Builds/GetBuild'
 
 
@@ -85,6 +87,7 @@ class JSON(object):
   def FromURL(cls, url):
     q = requests.get(url=url)
     if q.status_code != 200:
+      raise ValueError(f'status code [{url}] = {q.status_code}')
       return None
     elif q.text[0:4] == ')]}\'':
       return JSON.FromObj(json.loads(q.text[5:]))
@@ -108,9 +111,15 @@ def GetComments(crrev_id):
 
 def GetRedirectUrl(url):
   q = requests.get(url = url, allow_redirects=False)
-  if q.status_code == 301:
+  if q.status_code == 301 or q.status_code == 302:
     return q.headers['Location']
-  raise ValueError(url)
+  raise ValueError(f'{url} did not redirect (code={q.status_code})')
+
+def GetHostname(url):
+  hostname_match = HOSTNAME_REGEX.search(url)
+  if not hostname_match:
+     raise ValueError(f'couldnt extract hostname from {url}')
+  return hostname_match.groups()[0]
 
 
 # builtbots can be represented in a bunch of ways:
@@ -129,13 +138,20 @@ def GetBuildbotData(*args, **kwargs):
   if not url.startswith('http'):
     raise ValueError('Only supports full args or url')
 
-  url_parts = url.split('/')
-  if len(url_parts) == 5:
+  hostname = GetHostname(url)
+  if hostname == 'cr-buildbucket.appspot.com':
+    url = GetRedirectUrl(url)
+
+  hostname = GetHostname(url)
+  if hostname != 'ci.chromium.org':
+    raise ValueError('Redirect didnt lead to a ci.chromium.org url')
+
+  if BUILDBOT_GENID_REGEX.search(url):
     url = GetRedirectUrl(url)
 
   parsed = BUILDBOT_URL_REGEX.search(url)
   if not parsed:
-    raise ValueError(f'URL {url} was invalid')
+    raise ValueError(f'URL {url} not matched by {BUILDBOT_URL_REGEX}')
 
   groups = parsed.groups()
   return _GetBuildbotData(groups[0], groups[1], groups[2], groups[3], **kwargs)
