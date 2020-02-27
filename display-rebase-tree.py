@@ -2,11 +2,12 @@
 
 import sys
 
-from lib import librun, libgitbranch, liboutput, colors
+from lib import libargs, librun, libgitbranch, liboutput, colors
 
 
 CURRENT_BRANCH = None
-YES_VALUES = ('Y', 'y', 'yes', 'Yes')
+COMMAND = libargs.ArgumentParser()
+
 
 def setup():
   global CURRENT_BRANCH
@@ -14,28 +15,41 @@ def setup():
   if CURRENT_BRANCH.returncode:
     raise ValueError('Not in a git repository')
 
-def disp_branch(branch):
-  result = ''
-  if branch.checked_out:
-    result += colors.Color(colors.GREEN)
 
-  if branch.getAhead() == 0:
-    result += colors.Color(colors.PURPLE)
+def disp_branch(highlight):
+  def _inner(branch):
+    result = ''
+    gerrit = getattr(branch, 'gerritissue', '')
 
-  gerrit = getattr(branch, 'gerritissue', '')
-  result += branch.name
-  result += f' [{gerrit}]'
+    if highlight == 'branch.current':
+      if branch.name == CURRENT_BRANCH.stdout.strip():
+        result += colors.Color(colors.GREEN)
+    elif highlight == 'branch.merged':
+      if branch.getAhead() == 0 and branch.getBehind() == 0:
+        result += colors.Color(colors.GREEN)
 
-  result += colors.Color()
-  return result
+    result += branch.name
+    if gerrit:
+      result += f' [https://crrev.com/c/{gerrit}]'
+
+    return result + colors.Color()
+  return _inner
 
 
-def main():
-  # These commands are non-destructive, so run them regardless
+@COMMAND
+def print_tree(highlight:str='branch.current'):
   setup()
   master = libgitbranch.Branch.ReadGitRepo().get('master', None)
-  liboutput.PrintTree(
-    master, render=disp_branch, charset=liboutput.BOLD_BOX_CHARACTERS)
+  export = ['']
+
+  def _print_to_buffer(s, _, capture=export):
+    capture[0] += f'{s}\n'
+
+  liboutput.PrintTree(master, render=disp_branch(highlight=highlight),
+                      charset=liboutput.BOLD_BOX_CHARACTERS,
+                      output_function=_print_to_buffer)
+  print(export[0])
+
 
 if __name__ == '__main__':
-  main()
+  COMMAND.eval()
