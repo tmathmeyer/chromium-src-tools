@@ -4,6 +4,7 @@ RED    = '1'
 GREEN  = '2'
 YELLOW = '3'
 PURPLE = '5'
+CYAN   = '6'
 
 def Color(fg=None, bg=None):
   if fg and bg:

@@ -73,6 +73,8 @@ class CRTryjobs(UI.NormalWindow):
       return context.colors.GetColor('BLACK', 'YELLOW')
     if status == 'ERROR':
       return context.colors.GetColor('BLACK', 'RED')
+    if status == 'CANCELED':
+      return context.colors.GetColor('BLACK', 'CYAN')
     return context.colors.GetColor()
 
   def GetTryjobsList(self, cq, context):
