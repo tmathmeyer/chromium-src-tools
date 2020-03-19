@@ -1,0 +1,5 @@
+To use:
+
+ - run `make` to build `xfwd.so` on the _remote_ machine.
+ - ensure that x forwarding is enabled (the -Y or -X flag was used)
+ - execute your chromium binary `LD_PRELOAD='libdl.so /path/to/xfwd.so' chromium-binary-path`
