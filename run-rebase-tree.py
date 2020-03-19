@@ -105,11 +105,12 @@ def rebase_pump(master, repaint):
 
 
 class Context(object):
-  __slots__ = ('colors', 'terminal', 'tree')
-  def __init__(self, tree):
+  __slots__ = ('colors', 'terminal', 'tree', 'color_free')
+  def __init__(self, tree, color_free=False):
     self.colors = None
     self.terminal = None
     self.tree = tree
+    self.color_free = color_free
 
 
 class TreeView(UI.NormalWindow):
@@ -119,13 +120,20 @@ class TreeView(UI.NormalWindow):
 
   def colorize(self, context):
     def lam(branch):
+      GREEN = 'GREEN'
+      BLACK = 'BLACK'
+      RED = 'RED'
+      MAGENTA = 'MAGENTA'
+      YELLOW = 'YELLOW'
+      if context.color_free:
+        BLACK = 'WHITE'
       if branch.data.get('rebase_status', None) == 'Good':
-        return context.colors.GetColor('GREEN', 'BLACK')
+        return context.colors.GetColor(GREEN, BLACK)
       if branch.data.get('rebase_status', None) == 'Bad':
-        return context.colors.GetColor('RED', 'BLACK')
+        return context.colors.GetColor(RED, BLACK)
       if branch.data.get('rebase_status', None) == 'Progress':
-        return context.colors.GetColor('MAGENTA', 'BLACK')
-      return context.colors.GetColor('YELLOW', 'BLACK')
+        return context.colors.GetColor(MAGENTA, BLACK)
+      return context.colors.GetColor(YELLOW, BLACK)
     return lam
 
   def FormatBranch(self, branch):
@@ -149,7 +157,7 @@ def main():
   master = reparent_and_get_master(branches)
   master.data["rebase_status"] = 'Good'
 
-  with UI.Terminal(windows, Context(master)) as c:
+  with UI.Terminal(windows, Context(master, color_free=True)) as c:
     c.Start()
     c.WaitUntilEnded()
 
