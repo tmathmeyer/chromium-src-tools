@@ -11,13 +11,54 @@ import requests
 from urllib.parse import urlparse
 
 
+CONFIG = {}
 
-GOMA_DIR = '/usr/local/google/home/tmathmeyer/chromium/goma'
-CHROME_DIRECTORY = '/usr/local/google/home/tmathmeyer/chromium/src'
-CHROME_DIRECTORIES = [
-  '/usr/local/google/home/tmathmeyer/chromium/src',
-  '/usr/local/google/home/tmathmeyer/chromium/chromium-windows/src'
-]
+
+def WriteDefaultConfig(path):
+  home = os.environ['HOME']
+  default_varaibles = {
+    'goma_root': f'{home}/chromium/goma',
+    'src_directory': f'{home}/chromium/src',
+    'virtualenv': None,
+  }
+  if not os.path.exists(os.path.dirname(path)):
+    os.makedirs(os.path.dirname(path))
+  with open(path, 'w+') as f:
+    for k,v in default_varaibles.items():
+      f.write(f'{k} = {repr(v)}\n')
+  global CONFIG
+  CONFIG = default_varaibles
+
+
+def ReadConfig(path):
+  environ = {}
+  with open(path, 'r') as f:
+    exec(compile(f.read(), path, 'exec'), environ)
+  del environ['__builtins__']
+  global CONFIG
+  CONFIG = environ
+
+
+def SetupEnv():
+  env_location = os.environ['HOME']
+  if 'CHROMIUM_ROOT' in os.environ:
+    env_location = os.environ['CHROMIUM_ROOT']
+  config_path = f'{env_location}/.config/chromium/variables.config'
+  if not os.path.exists(config_path):
+    WriteDefaultConfig(config_path)
+    return
+  ReadConfig(config_path)
+
+
+def EnsurePython():
+  python_direcory = CONFIG['virtualenv']
+  if python_direcory is None:
+    CONFIG['activate'] = 'echo ACTIVATED'
+    return
+  CONFIG['activate'] = f'source {python_direcory}/bin/activate'
+  if os.path.exists(python_direcory):
+    return
+  os.system(f'virtualenv -p /usr/bin/python2.7 --distribute {python_direcory}')
 
 
 def RunCommand(command, stream_stdout=False):
@@ -26,6 +67,7 @@ def RunCommand(command, stream_stdout=False):
                         shell=True,
                         stderr=subprocess.PIPE,
                         stdout=(None if stream_stdout else subprocess.PIPE))
+
 
 class Complete():
   """Auto complet generator."""
@@ -49,13 +91,26 @@ class Complete():
         if k.startswith(sys.argv[3]):
           print(k)
     else:
-      # Ensure goma is running
-      os.system(f'{GOMA_DIR}/goma_ctl.py ensure_start 2>/dev/null > /dev/null')
-      return self.run_func(self.fail, sys.argv[1], sys.argv[2:])
-      #self.functions.get(sys.argv[1], self.fail())['func'](*sys.argv[2:])
+      kwargs = {}
+      args = []
+      for arg in sys.argv[2:]:
+        if arg[0] == '-':
+          if '=' in arg:
+            key, val = arg[1:].split('=')
+            kwargs[key] = val
+          else:
+            kwargs[arg[1:]] = True
+        else:
+          args.append(arg[1:])
 
-  def run_func(self, onfail, name, args):
-    return self.functions.get(name, onfail())['func'](*args)
+      # Ensure goma is running
+      os.system(f'{CONFIG["goma_root"]}/goma_ctl.py ensure_start 2>/dev/null > /dev/null')
+      EnsurePython()
+      outcome = self.run_func(self.fail, sys.argv[1], args, kwargs)
+      os.system('deactivate')
+
+  def run_func(self, onfail, name, args, kwargs):
+    return self.functions.get(name, onfail())['func'](*args, **kwargs)
 
   def fail(self):
     return {
@@ -79,7 +134,7 @@ class Build():
       'enable_nacl': 'false',
       'dcheck_always_on': 'true',
       'use_goma': 'true',
-      'goma_dir': '"{}"'.format(GOMA_DIR),
+      'goma_dir': '"{}"'.format(CONFIG['goma_root']),
       'is_clang': 'true',
       'symbol_level': '1',
       'enable_mse_mpeg2ts_stream_parser': 'true',
@@ -97,10 +152,13 @@ class Build():
     return '\n'.join('{}={}'.format(k,v) for k,v in self.gn_args.items() if v != None)
 
   def run(self, *args, **kwargs):
-    if not os.path.isdir('{}/out/{}'.format(CHROME_DIRECTORY, self.base)):
+    if not os.path.isdir('{}/out/{}'.format(CONFIG['src_directory'], self.base)):
       os.system('gn gen out/{} --check --args=\'{}\''.format(self.base, self.args()))
     # TODO: return the stdout here!
-    cmd = f'ninja -C out/{self.base} {self.target} -j{self.j}'
+    self.__dict__.update(kwargs)
+    activate = CONFIG['activate']
+    ninja = f'ninja -C out/{self.base} {self.target} -j{self.j}'
+    cmd = f'{activate} && {ninja}'
     print(cmd)
     res = RunCommand(cmd, stream_stdout=True)
     return res
@@ -284,7 +342,7 @@ class goma_build():
     self.func = func
 
   def __call__(self, *args, **kwargs):
-    return self.func(*args, **kwargs).run(*args, **kwargs)
+    return self.func(*args).run(*args, **kwargs)
 
 
 @complete('bot', 'build the targets the way a bot does')
@@ -562,12 +620,7 @@ def clusterfuzz(*args):
 
 
 if __name__ == '__main__':
-  found = False
-  for D in CHROME_DIRECTORIES:
-    if os.getcwd() == D:
-      CHROME_DIRECTORY = D
-      found = True
-
-  if not found:
+  SetupEnv()
+  if os.getcwd() != CONFIG['src_directory']:
     raise Exception('only works in //chromium/src directory!')
   complete.run()
