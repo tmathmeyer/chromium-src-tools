@@ -27,7 +27,7 @@ def createFlaskApp():
   app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
   # make flask shut up.
   log = logging.getLogger('werkzeug')
-  log.disabled = True
+  #log.disabled = True
   return app
 
 
@@ -91,7 +91,7 @@ def StartChrome(binary, port, flags):
   host = '127.0.0.1'
   chrome_process_flags = [
      binary, '--headless',
-     f'--remote-debugging-address={host}',
+     #f'--remote-debugging-address={host}',
      f'--remote-debugging-port={port}'] + flags
   flagstr = '\n'.join(chrome_process_flags)
   log(f'Chrome flags:\n{flagstr}', level='info')
@@ -102,6 +102,7 @@ def StartChrome(binary, port, flags):
     try:
       resp = requests.get(f'http://{host}:{port}/json').json()
       return (browser_proc,
+              resp[0]['devtoolsFrontendUrl'],
               websocket.create_connection(resp[0]['webSocketDebuggerUrl']),
               resp[0]['id'])
     except requests.exceptions.ConnectionError:
@@ -159,7 +160,14 @@ class DevDevArgs(FlObAr):
       return f'--enable-features={getattr(self, "chrome-features")}'
     return ''
 
-  def GetPort(self, default=9001):
+  def ShouldShowHelp(self):
+    if hasattr(self, 'help'):
+      print('[CHROMIUM_SRC=*] devdev.py [--outdir=Default] '
+            '[--chrome-features=*,*] [--port=9001] [--url=about:blank] '
+            '[--host=127.0.0.1]')
+      exit()
+
+  def GetPort(self, default=9222):
     if hasattr(self, 'port'):
       return int(self.port)
     return default
@@ -255,7 +263,7 @@ def RunFromOutDir(flaskapp,
   if chromeflags is None:
     chromeflags = []
 
-  proc, chromeconn, page_id = StartChrome(
+  proc, FEURL, chromeconn, page_id = StartChrome(
     chromiumbinary, debugger_port, chromeflags)
   maybeProxy = {}
   chromeconn = ChromeComm(chromeconn)
@@ -267,7 +275,7 @@ def RunFromOutDir(flaskapp,
       tabs = tabs.split(',')
     else:
       tabs = []
-    tabs.append('protocolMonitor')
+    #tabs.append('protocolMonitor')
     for enable in tabs:
       result += f"Root.Runtime.experiments.setEnabled('{enable}', true);"
     result += '</script>'
@@ -275,8 +283,8 @@ def RunFromOutDir(flaskapp,
 
   @flaskapp.route('/')
   def rewrite():
-    devtools_url = GetDevtoolsWss(
-      request.url_root, page_id, debugger_port, maybeProxy, chromeconn)
+    #GetDevtoolsWss(request.url_root, page_id, debugger_port, maybeProxy, chromeconn)
+    devtools_url = FEURL.split('?')[1]
     has_experiments = (request.args.get('experiments', None) != None)
     has_ws = (request.args.get('pid') == page_id)
     has_tabs = request.args.get('tabs')
@@ -289,8 +297,10 @@ def RunFromOutDir(flaskapp,
       return redirect(newurl, code=302)
     with open(os.path.join(devtools_src, 'devtools_app.html'), 'r') as f:
       textual = f.read()
-      first_bit, second_bit = textual.split('</head>')
-      return f'{first_bit}{hijackJS()}{second_bit}'
+      return textual
+      #print(textual)
+      #first_bit, second_bit = textual.split('</head>')
+      #return f'{first_bit}{hijackJS()}{second_bit}'
 
   @flaskapp.route('/<path:path>')
   def serve(path):
@@ -324,6 +334,7 @@ def RunItAll():
   log('Signals Up')
 
   args = DevDevArgs()
+  args.ShouldShowHelp()
   log('Args Parsed')
 
   flaskapp = createFlaskApp()

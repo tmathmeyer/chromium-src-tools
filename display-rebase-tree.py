@@ -2,7 +2,7 @@
 
 import sys
 
-from lib import libargs, librun, libgitbranch, liboutput, colors
+from lib import libargs, librun, libgerrit, libgitbranch, liboutput, colors
 
 
 CURRENT_BRANCH = None
@@ -16,28 +16,52 @@ def setup():
     raise ValueError('Not in a git repository')
 
 
+def display_help():
+  print('highlight options:')
+  print('  branch.current')
+  print('  branch.merged')
+
+
+def get_branch_status(issue_number):
+  return f'<{libgerrit.GetReviewDetail(issue_number).status}>'
+
+
 def disp_branch(highlight):
   def _inner(branch):
-    result = ''
-    gerrit = getattr(branch, 'gerritissue', '')
+    color = ''
+    issue_number = getattr(branch, 'gerritissue', '')
+
+    suffix = ''
+    if issue_number:
+      status = get_branch_status(issue_number)
+      suffix = f' [https://crrev.com/c/{issue_number}] {status}'
+
+    branch_ahead = branch.getAhead()
+    branch_behind = branch.getBehind()
+
+    prefix = f' ↑{branch_ahead} ↓{branch_behind}'
+    if (branch.name == 'master'):
+      prefix = ''
 
     if highlight == 'branch.current':
       if branch.name == CURRENT_BRANCH.stdout.strip():
-        result += colors.Color(colors.GREEN)
-    elif highlight == 'branch.merged':
-      if branch.getAhead() == 0 and branch.getBehind() == 0:
-        result += colors.Color(colors.GREEN)
+        color += colors.Color(colors.GREEN)
 
-    result += branch.name
-    if gerrit:
-      result += f' [https://crrev.com/c/{gerrit}]'
+    if highlight == 'branch.merged':
+      if suffix.endswith('<MERGED>'):
+        color += colors.Color(colors.GREEN)
 
-    return result + colors.Color()
+    return f' {color}{branch.name}{prefix}{suffix}{colors.Color()}'
+
   return _inner
 
 
 @COMMAND
 def print_tree(highlight:str='branch.current'):
+  if highlight == 'help':
+    display_help()
+    return
+
   setup()
   master = libgitbranch.Branch.ReadGitRepo().get('master', None)
   export = ['']

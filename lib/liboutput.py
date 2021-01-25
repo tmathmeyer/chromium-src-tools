@@ -2,17 +2,17 @@
 from collections import namedtuple as nt
 
 
-CharSet = nt('CharSet', ['vstem', 'branch', 'lastbranch', 'indent'])
+CharSet = nt('CharSet', ['vstem', 'branch', 'lastbranch', 'indent', 'drop'])
 
 
-DEFAULT_CHARSET = CharSet('│', '├', '└', '─')
-BOLD_BOX_CHARACTERS = CharSet('┃', '┣', '┗', '━')
-ASCII_ONLY = CharSet('|', '|', '`', '-')
+DEFAULT_CHARSET = CharSet('│', '├', '└', '─', '┬')
+BOLD_BOX_CHARACTERS = CharSet('┃', '┣', '┗', '━━', '┳')
+ASCII_ONLY = CharSet('|', '|', '`', '-', '-')
 
 
 def PrintTree(tree, render=str, child_iterator=None, charset=DEFAULT_CHARSET,
                     output_function=lambda l,_:print(l)):
-  SPACES = ' ' * len(charset.indent)
+  SPACES = ' ' * (len(charset.indent) - 1)
   def _print_internal2(_tree, substr, stemmed=True, last=False):
     children = list(child_iterator(_tree) if child_iterator else _tree.children)
     indent = substr
@@ -20,6 +20,8 @@ def PrintTree(tree, render=str, child_iterator=None, charset=DEFAULT_CHARSET,
       indent += SPACES
       indent += (charset.lastbranch if last else charset.branch)
       indent += charset.indent
+      if children:
+        indent = indent[:-1] + charset.drop
     output_function(indent + render(_tree), _tree)
 
     if stemmed:

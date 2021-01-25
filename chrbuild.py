@@ -17,8 +17,8 @@ CONFIG = {}
 def WriteDefaultConfig(path):
   home = os.environ['HOME']
   default_varaibles = {
-    'goma_root': f'{home}/chromium/goma',
-    'src_directory': f'{home}/chromium/src',
+    'goma_root': f'/media/chromium/chromium-git/src/third_party/depot_tools/.cipd_bin',
+    'src_directory': f'/media/chromium/chromium-git/src',
     'virtualenv': None,
   }
   if not os.path.exists(os.path.dirname(path)):
@@ -51,14 +51,15 @@ def SetupEnv():
 
 
 def EnsurePython():
-  python_direcory = CONFIG['virtualenv']
-  if python_direcory is None:
+  python_directory = CONFIG['virtualenv']
+  if python_directory is None:
     CONFIG['activate'] = 'echo ACTIVATED'
     return
-  CONFIG['activate'] = f'source {python_direcory}/bin/activate'
-  if os.path.exists(python_direcory):
+  CONFIG['activate'] = f'source {python_directory}/bin/activate'
+  if os.path.exists(python_directory):
     return
-  os.system(f'virtualenv -p /usr/bin/python2.7 --distribute {python_direcory}')
+  os.system(f'virtualenv -p /usr/bin/python2.7 {python_directory}')
+  os.system('python --version')
 
 
 def RunCommand(command, stream_stdout=False):
@@ -101,7 +102,7 @@ class Complete():
           else:
             kwargs[arg[1:]] = True
         else:
-          args.append(arg[1:])
+          args.append(arg)
 
       # Ensure goma is running
       os.system(f'{CONFIG["goma_root"]}/goma_ctl.py ensure_start 2>/dev/null > /dev/null')
@@ -313,7 +314,7 @@ class MultiBuild():
           base=self.base,
           gn_args=self.gn_args,
           j=getattr(self, 'j', 2000)))
-    }, target, [])
+    }, target, [], {})
     if x.returncode == 1:
       if x.stderr.startswith('ninja: error: unknown target'):
         drop = x.stderr[30:-2]
@@ -334,7 +335,7 @@ class MultiBuild():
             base=self.base,
             gn_args=self.gn_args,
             j=getattr(self, 'j', 2000)))
-      }, target, [])
+      }, target, [], {})
 
 
 class goma_build():
@@ -463,7 +464,17 @@ def devtools():
 @complete('chrelease', 'build standard chromium (in release)')
 @goma_build
 def chromium():
-  return Build(base='Release')
+  return Build(base='Release', gn_args={
+    'proprietary_codecs': 'true',
+    'enable_nacl': 'false',
+    'use_goma': 'true',
+    'is_official_build': 'true',
+    'is_clang': 'true',
+    'symbol_level': '0',
+    'ffmpeg_branding': '"Chrome"',
+    'use_vaapi': 'true',
+    'is_debug': 'false',
+  })
 
 @complete('apk', 'build chrome for android')
 @goma_build

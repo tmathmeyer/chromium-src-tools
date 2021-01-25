@@ -6,6 +6,8 @@ import numbers
 import re
 import requests
 
+from . import libjson
+
 
 CRREV_DETAIL_URL = 'https://chromium-review.googlesource.com/changes/{}/detail'
 CRREV_COMMENTS_URL = 'https://chromium-review.googlesource.com/changes/{}/comments'
@@ -19,94 +21,18 @@ BUILDBOT_GENID_REGEX = re.compile(r'https://ci.chromium.org/b/([0-9]+)')
 BUILDBOT_RPC_URL = 'https://cr-buildbucket.appspot.com/prpc/buildbucket.v2.Builds/GetBuild'
 
 
-class JSONError(Exception):
-  def __init__(self, msg):
-    super().__init__(msg)
-
-class JSON(object):
-  def __init__(self, json_obj):
-    self.json_obj = json_obj
-    self.type = None
-    if type(self.json_obj) == str:
-      self.type = 'str'
-    elif type(self.json_obj) == list:
-      self.type = 'list'
-    elif type(self.json_obj) == dict:
-      self.type = 'dict'
-    elif isinstance(self.json_obj, numbers.Number):
-      self.type = 'int'
-
-  def __bool__(self):
-    return bool(self.json_obj)
-
-  def __getattr__(self, attr):
-    try:
-      if self.type == 'dict':
-        return JSON.FromObj(self.json_obj.get(attr))
-      if attr == 'RAW':
-        return self.json_obj
-    except:
-      raise JSONError(f'__getattr__({attr})')
-    raise JSONError(f'__getattr__({attr})')
-
-  def __getitem__(self, index):
-    if self.type == 'list':
-      return JSON.FromObj(self.json_obj[index])
-    if self.type == 'dict':
-      return JSON.FromObj(self.json_obj[index])
-    raise JSONError(f'__getitem__({index})')
-
-  def __repr__(self):
-    return self.json_obj
-
-  def __str__(self):
-    return str(self.json_obj)
-
-  def __iter__(self):
-    if self.type == 'list':
-      for index in self.json_obj:
-        yield JSON.FromObj(index)
-    elif self.type == 'dict':
-      for index in self.json_obj.keys():
-        yield index
-    else:
-      raise JSONError(f'__iter__({self.type})')
-
-  @classmethod
-  def FromObj(cls, obj):
-    if type(obj) == list:
-      return JSON(obj)
-    elif type(obj) == dict:
-      return JSON(obj)
-    elif obj == None:
-      return JSON(obj)
-    else:
-      return obj
-
-  @classmethod
-  def FromURL(cls, url):
-    q = requests.get(url=url)
-    if q.status_code != 200:
-      raise ValueError(f'status code [{url}] = {q.status_code}')
-      return None
-    elif q.text[0:4] == ')]}\'':
-      return JSON.FromObj(json.loads(q.text[5:]))
-    else:
-      return JSON.FromObj(json.loads(q.text))
-
-
 def GetReviewDetail(crrev_id):
   """Get JSON representation of a cr."""
-  return JSON.FromURL(CRREV_DETAIL_URL_O.format(crrev_id))
+  return libjson.JSON.FromURL(CRREV_DETAIL_URL_O.format(crrev_id))
 
 
 def GetCQStatus(crrev_id, patchset):
   """Get JSON data for a cq job."""
-  return JSON.FromURL(PATCHSET_STATUS_URL.format(crrev_id, patchset))
+  return libjson.JSON.FromURL(PATCHSET_STATUS_URL.format(crrev_id, patchset))
 
 
 def GetComments(crrev_id):
-  return JSON.FromURL(CRREV_COMMENTS_URL.format(crrev_id))
+  return libjson.JSON.FromURL(CRREV_COMMENTS_URL.format(crrev_id))
 
 
 def GetRedirectUrl(url):
@@ -175,7 +101,7 @@ def _GetBuildbotData(project, bucket, builder, buildNumber, fields='steps,id'):
     })
   if q.status_code != 200:
     raise ValueError('Couldn\'t make RPC for buildbot data')
-  return JSON.FromObj(json.loads(q.text[5:]))
+  return libjson.JSON.FromObj(json.loads(q.text[5:]))
 
 
 
