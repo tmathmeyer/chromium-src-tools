@@ -285,6 +285,9 @@ class Terminal(object):
     return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
+    self.end()
+
+  def end():
     self.finished = True
     curses.ungetch(27)
     self.joinKeyListenerThread()
@@ -292,6 +295,7 @@ class Terminal(object):
     self.screen.keypad(False)
     curses.echo()
     curses.endwin()
+
 
   def WaitUntilEnded(self):
     while True:

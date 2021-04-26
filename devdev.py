@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3.9
 
 import asyncio
 from flask import Flask, escape, request, send_from_directory, redirect
@@ -27,7 +27,7 @@ def createFlaskApp():
   app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
   # make flask shut up.
   log = logging.getLogger('werkzeug')
-  #log.disabled = True
+  log.disabled = True
   return app
 
 
@@ -304,7 +304,36 @@ def RunFromOutDir(flaskapp,
 
   @flaskapp.route('/<path:path>')
   def serve(path):
-    return send_from_directory(devtools_src, path)
+    try:
+      return send_from_directory(devtools_src, path)
+    except:
+      if path.startswith('common/'):
+        return serve(path[7:])
+      if path.startswith('core/'):
+        return serve(path[5:])
+      if path.startswith('models/'):
+        return serve(path[7:])
+      if path.startswith('text_utils/'):
+        return send_from_directory(devtools_src, 'text_editor/' + path[11:])
+
+
+      if path == 'ui/legacy/legacy.js':
+        return send_from_directory(devtools_src, 'ui/ui-legacy.js')
+
+      if path == 'ui/legacy/ui.js':
+        return send_from_directory(devtools_src, 'ui/ui.js')
+      if path == 'text_utils/CodeMirrorUtils.js':
+        return send_from_directory(devtools_src, 'text_editor/CodeMirrorUtils.js')
+
+      if path.startswith('ui/legacy/'):
+        return send_from_directory(devtools_src, 'ui/' + path[10:])
+
+
+      real = os.path.join(devtools_src, path)
+      print(f'Cant load {path} from {real}')
+      os.system(f'ls -lash {real}')
+
+      return send_from_directory(devtools_src, path)
 
   return proc, chromeconn, maybeProxy
 

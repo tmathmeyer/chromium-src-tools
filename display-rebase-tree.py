@@ -51,7 +51,12 @@ def disp_branch(highlight):
       if suffix.endswith('<MERGED>'):
         color += colors.Color(colors.GREEN)
 
-    return f' {color}{branch.name}{prefix}{suffix}{colors.Color()}'
+    parent = branch.parent.get()
+    if type(parent) != str:
+      parent = parent.parent
+    else:
+      parent = 'UNKNOWN'
+    return f' {color}{branch.name} ({parent}){prefix}{suffix}{colors.Color()}'
 
   return _inner
 

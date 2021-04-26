@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3
 
 # chromium build script!
 
@@ -17,8 +17,8 @@ CONFIG = {}
 def WriteDefaultConfig(path):
   home = os.environ['HOME']
   default_varaibles = {
-    'goma_root': f'/media/chromium/chromium-git/src/third_party/depot_tools/.cipd_bin',
-    'src_directory': f'/media/chromium/chromium-git/src',
+    'goma_root': f'/chromium/goma/client/out/Release',
+    'src_directory': f'/chromium/chromium-git/src',
     'virtualenv': None,
   }
   if not os.path.exists(os.path.dirname(path)):
@@ -105,10 +105,9 @@ class Complete():
           args.append(arg)
 
       # Ensure goma is running
-      os.system(f'{CONFIG["goma_root"]}/goma_ctl.py ensure_start 2>/dev/null > /dev/null')
+      # os.system(f'{CONFIG["goma_root"]}/goma_ctl.py ensure_start 2>/dev/null > /dev/null')
       EnsurePython()
       outcome = self.run_func(self.fail, sys.argv[1], args, kwargs)
-      os.system('deactivate')
 
   def run_func(self, onfail, name, args, kwargs):
     return self.functions.get(name, onfail())['func'](*args, **kwargs)
@@ -142,7 +141,7 @@ class Build():
       'ffmpeg_branding': '"ChromeOS"'
     }
 
-  def __init__(self, target='chrome', base='Default', gn_args=None, j=2000):
+  def __init__(self, target='chrome', base='Default', gn_args=None, j=1000):
     self.target = target
     self.base = base
     self.gn_args = self.default_args()
@@ -157,11 +156,9 @@ class Build():
       os.system('gn gen out/{} --check --args=\'{}\''.format(self.base, self.args()))
     # TODO: return the stdout here!
     self.__dict__.update(kwargs)
-    activate = CONFIG['activate']
     ninja = f'ninja -C out/{self.base} {self.target} -j{self.j}'
-    cmd = f'{activate} && {ninja}'
-    print(cmd)
-    res = RunCommand(cmd, stream_stdout=True)
+    print(ninja)
+    res = RunCommand(ninja, stream_stdout=True)
     return res
 
 
@@ -313,7 +310,7 @@ class MultiBuild():
           target=target,
           base=self.base,
           gn_args=self.gn_args,
-          j=getattr(self, 'j', 2000)))
+          j=getattr(self, 'j', 1000)))
     }, target, [], {})
     if x.returncode == 1:
       if x.stderr.startswith('ninja: error: unknown target'):
@@ -334,7 +331,7 @@ class MultiBuild():
             target=target,
             base=self.base,
             gn_args=self.gn_args,
-            j=getattr(self, 'j', 2000)))
+            j=getattr(self, 'j', 1000)))
       }, target, [], {})
 
 

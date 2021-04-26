@@ -119,7 +119,7 @@ class Branch(Generic[T], collections.namedtuple('Branch', [
   @classmethod
   def Parse(cls, line:str) -> 'Branch':
     name, parent = line.split('~')
-    return cls(name, Box(parent or None), [], False, {})
+    return cls(name, Box(parent or 'master'), [], False, {})
 
 
   @classmethod

@@ -23,6 +23,7 @@ def CheckCommand(command):
 
 LOF = [
   'chrome',
+  'crashpad_handler',
   'chrome_100_percent.pak',
   'chrome_200_percent.pak',
   'chrome_sandbox',
@@ -31,11 +32,12 @@ LOF = [
   'libGLESv2.so',
   'resources.pak',
   'v8_context_snapshot.bin',
+  'libminigbm.so',
 ]
 
 LOD = [
   'extensions',
-  'locales'
+  'locales',
 ]
 
 def make_zip(name, sofiles):
