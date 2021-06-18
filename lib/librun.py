@@ -11,7 +11,6 @@ def RunCommand(command):
                         stdout=subprocess.PIPE)
 
 def OutputOrError(cmd):
-  print(cmd)
   result = RunCommand(cmd)
   if result.returncode:
     raise ValueError(f'|{cmd}|:\n {result.stderr}')

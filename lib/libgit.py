@@ -1,44 +1,72 @@
 
 from . import librun
 
-
-
-
 class Branch(object):
   @classmethod
   def Current(cls):
     branchname = librun.OutputOrError('git symbolic-ref -q HEAD')
     if not branchname.startswith('refs/heads/'):
       raise ValueError(f'{branchname} is not a valid branch')
-    return cls(branchname)
+    return cls.Get(branchname)
 
-  __slots__('_branchname', '_children')
+  @classmethod
+  def Get(cls, branchname):
+    if not hasattr(cls, '__cache'):
+      setattr(cls, '__cache', {})
+    cache = getattr(cls, '__cache')
+    if branchname in cache:
+      return cache[branchname]
+    branch = cls(branchname)
+    cache[branchname] = branch
+    return branch
+
+  @classmethod
+  def GetAllBranches(cls):
+    branches = librun.OutputOrError(
+      'git branch --format "%(refname:short)"').split('\n')
+    for branch in branches:
+      yield cls.Get(branch)
+
+  @classmethod
+  def Default(cls):
+    default_name = librun.OutputOrError(
+      'git symbolic-ref refs/remotes/origin/HEAD')
+    return cls.Get(default_name[20:])
+
+  __slots__ = ('_branchname', '_children')
 
   def __init__(self, branchname:str):
     self._branchname = branchname
     self._children = None
 
   def __getattr__(self, attr:str):
+
     return librun.OutputOrError(
       f'git config --get branch.{self._branchname}.{attr}')
+
+  def Name(self):
+    return self._branchname
 
   def Children(self):
     if self._children is None:
       self._children = []
+      for branch in Branch.GetAllBranches():
+        if branch.Parent().Name() == self.Name():
+          self._children.append(branch)
+    return self._children
 
   def Parent(self):
-    parent = librun.OutputOrError(
-      f'git rev-parse --abbrev-ref {self._branchname}@{{u}}')
-    return Branch(parent)
-
-  def GetUpstreamBranch(self):
-    return librun.OutputOrError(
-      f'git rev-parse --abbrev-ref {self._branchname}@{{u}}')
+    try:
+      parent = librun.OutputOrError(
+        f'git rev-parse --abbrev-ref {self._branchname}@{{u}}')
+      return Branch.Get(parent)
+    except ValueError:
+      return Branch.Default()
   
   def GetAheadBehind(self):
-    return self.AheadBehindBranch(self.GetUpstreamBranch())
+    return self.AheadBehindBranch(self.Parent().Name())
 
-  def AheadBehindBranch(self, branch):
+  def AheadBehindBranch(self, branch:str):
     values = librun.OutputOrError(f'''git rev-list --left-right \
       {self._branchname}...{branch} --count''')
     values = values.split()
@@ -54,10 +82,3 @@ class Branch(object):
       raise ValueError('No files changed between this branch and master')
     return librun.OutputOrError(
       f'git diff --name-only HEAD HEAD~{ahead}').split('\n')
-
-  def GetName(self):
-    return self._branchname
-
-  @classmethod
-  def ConfigFor(clz, branchname, attr):
-    return librun.OutputOrError(f'git config --get branch.{branchname}.{attr}')

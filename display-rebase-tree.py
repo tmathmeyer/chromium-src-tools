@@ -2,7 +2,7 @@
 
 import sys
 
-from lib import libargs, librun, libgerrit, libgitbranch, liboutput, colors
+from lib import libargs, librun, libgerrit, libgit, liboutput, colors
 
 
 CURRENT_BRANCH = None
@@ -29,34 +29,36 @@ def get_branch_status(issue_number):
 def disp_branch(highlight):
   def _inner(branch):
     color = ''
-    issue_number = getattr(branch, 'gerritissue', '')
+    try:
+      issue_number = getattr(branch, 'gerritissue', '')
+    except:
+      issue_number = None
 
     suffix = ''
     if issue_number:
       status = get_branch_status(issue_number)
       suffix = f' [https://crrev.com/c/{issue_number}] {status}'
 
-    branch_ahead = branch.getAhead()
-    branch_behind = branch.getBehind()
+    branch_ahead, branch_behind = branch.GetAheadBehind()
 
     prefix = f' ↑{branch_ahead} ↓{branch_behind}'
-    if (branch.name == 'master'):
+    if (branch.Name() == 'master'):
       prefix = ''
 
     if highlight == 'branch.current':
-      if branch.name == CURRENT_BRANCH.stdout.strip():
+      if branch.Name() == CURRENT_BRANCH.stdout.strip():
         color += colors.Color(colors.GREEN)
 
     if highlight == 'branch.merged':
       if suffix.endswith('<MERGED>'):
         color += colors.Color(colors.GREEN)
 
-    parent = branch.parent.get()
+    parent = branch.Parent()
     if type(parent) != str:
-      parent = parent.name
+      parent = parent.Name()
     else:
       parent = 'UNKNOWN'
-    return f' {color}{branch.name} ({parent}){prefix}{suffix}{colors.Color()}'
+    return f' {color}{branch.Name()} ({parent}){prefix}{suffix}{colors.Color()}'
 
   return _inner
 
@@ -68,7 +70,7 @@ def print_tree(highlight:str='branch.current'):
     return
 
   setup()
-  master = libgitbranch.Branch.ReadGitRepo().get('master', None)
+  master = libgit.Branch.Get('master')
   export = ['']
 
   def _print_to_buffer(s, _, capture=export):
@@ -76,7 +78,8 @@ def print_tree(highlight:str='branch.current'):
 
   liboutput.PrintTree(master, render=disp_branch(highlight=highlight),
                       charset=liboutput.BOLD_BOX_CHARACTERS,
-                      output_function=_print_to_buffer)
+                      output_function=_print_to_buffer,
+                      child_iterator=lambda b:b.Children())
   print(export[0])
 
 
