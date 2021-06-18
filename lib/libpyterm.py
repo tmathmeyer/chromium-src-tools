@@ -299,7 +299,12 @@ class Terminal(object):
 
   def WaitUntilEnded(self):
     while True:
-      event = self.eventqueue.get()
+      event = None
+      try:
+        event = self.eventqueue.get()
+      except:
+        self.repaintqueue.put(EndedEvent())
+        return
       if event.GetType() == ResizeEvent:
         self.ResizeWindows(event.Width(), event.Height())
       elif event.GetType() == StartupEvent:

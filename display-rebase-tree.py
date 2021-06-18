@@ -53,7 +53,7 @@ def disp_branch(highlight):
 
     parent = branch.parent.get()
     if type(parent) != str:
-      parent = parent.parent
+      parent = parent.name
     else:
       parent = 'UNKNOWN'
     return f' {color}{branch.name} ({parent}){prefix}{suffix}{colors.Color()}'

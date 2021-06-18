@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.8
+#!/usr/bin/env python3
 
 from lib import colors, libargs, librun, libgit
 
@@ -26,5 +26,4 @@ def run(pattern:str, replace:str=None):
         print(result.stdout)
 
 if __name__ == '__main__':
-  print('foo')
   COMMAND.eval()

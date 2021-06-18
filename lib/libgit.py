@@ -1,19 +1,30 @@
 
 from . import librun
 
-class Branch(object):
-  def __init__(self, branchname=None):
-    if not branchname:
-      self._branchname = librun.OutputOrError('git symbolic-ref -q HEAD')
-      if not self._branchname.startswith('refs/heads/'):
-        raise ValueError(f'{self._branchname} is not a valid branch')
-      self._branchname = self._branchname[11:]
-    else:
-      self._branchname = branchname
 
-  def __getattr__(self, attr):
+
+
+class Branch(object):
+  @classmethod
+  def Current(cls):
+    branchname = librun.OutputOrError('git symbolic-ref -q HEAD')
+    if not branchname.startswith('refs/heads/'):
+      raise ValueError(f'{branchname} is not a valid branch')
+    return cls(branchname)
+
+  __slots__('_branchname', '_children')
+
+  def __init__(self, branchname:str):
+    self._branchname = branchname
+    self._children = None
+
+  def __getattr__(self, attr:str):
     return librun.OutputOrError(
       f'git config --get branch.{self._branchname}.{attr}')
+
+  def Children(self):
+    if self._children is None:
+      self._children = []
 
   def Parent(self):
     parent = librun.OutputOrError(

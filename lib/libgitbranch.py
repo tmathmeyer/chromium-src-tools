@@ -11,8 +11,10 @@ class ItrOrder(Enum):
   POSTFIX = 1
   PREFIX = 2
 
+
 class BranchIndex(collections.namedtuple('BranchIndex', ['Num', 'Of'])):
   pass
+
 
 X = TypeVar('X')
 class Box(Generic[X]):

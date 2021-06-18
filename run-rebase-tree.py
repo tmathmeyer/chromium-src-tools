@@ -1,171 +1,147 @@
 #!/usr/bin/env python3
 
-import sys
+from collections import namedtuple
+import queue
 import threading
 
-from lib import librun
+from lib import libcurses
 from lib import libgitbranch
-from lib import liboutput
-from lib import libpyterm as UI
+from lib import librun
 
 
-class ExitMsgError(Exception):
-  def __init__(self, msg, err):
-    super().__init__()
-    self.message = msg
-    self.error = err
+class RebaseTask(namedtuple('RebaseTask', ['branch', 'view'])):
+  def Run(self):
+    if self.branch.name == 'master':
+      self.view.SetContentColor('GREEN')
+      self.view.Repaint()
+      return None
+    branch_behind = self.branch.getBehind()
+    if branch_behind == 0:
+      self.view.SetContentColor('GREEN')
+      self.view.Repaint()
+      return None
+    else:
+      self.view.SetContentColor('YELLOW')
+      self.view.Repaint()
 
+    self.view.SetContent(f'{self.branch.name}: Checkout')
+    self.view.Repaint()
+    if librun.RunCommand(f'git checkout {self.branch.name}').returncode:
+      self.view.SetContentColor('RED')
+      self.view.Repaint()
+      return self.branch.name
 
-def exit_msg(msg):
-  raise ExitMsgError(msg, 1)
+    self.view.SetContent(f'{self.branch.name}: rebasing forward {branch_behind} commits')
+    self.view.Repaint()
+    if librun.RunCommand('git rebase').returncode or self.current_branch_dirty():
+      self.view.SetContentColor('RED')
+      self.cleanup()
+      self.view.Repaint()
+      return self.branch.name
 
+    self.view.SetContent(f'{self.branch.name}: gclient sync')
+    self.view.Repaint()
+    if librun.RunCommand('gclient --sync').returncode:
+      self.view.SetContentColor('RED')
+      self.cleanup()
+      self.view.Repaint()
+      return self.branch.name
 
-def ensure_git():
-  if librun.RunCommand('git branch --show-current').returncode:
-    exit_msg('Not in a git repository')
+    self.view.SetContent(f'{self.branch.name}: Finished')
+    self.view.SetContentColor('GREEN')
+    self.view.Repaint()
+    return None
 
+  def current_branch_dirty(self):
+    status = librun.RunCommand('git status --porcelain')
+    return bool(status.returncode or status.stdout or status.stderr)
 
-def current_branch_dirty():
-  status = librun.RunCommand('git status --porcelain')
-  return bool(status.returncode or status.stdout or status.stderr)
-
-
-def clean_rebase():
-  if librun.RunCommand('git rebase --abort').returncode:
-    exit_msg('failed to abort rebase')
-  if librun.RunCommand('git clean -f -d').returncode:
-    exit_msg('failed to clean directory')
-  if not current_branch_dirty():
-    return
-  if librun.RunCommand('git checkout master').returncode:
-    exit_msg('failed to switch back to master branch')
-  if current_branch_dirty():
-    exit_msg('failed to clean branch, please procede manually')
-
-
-def reparent_branches(upstream, unparented):
-  for branch in unparented:
-    print(f'reparenting {branch.name}')
-    checkout = f'git checkout {branch.name}'
-    reparent = f'git branch --set-upstream-to={upstream.name}'
-    if librun.RunCommand(checkout).returncode:
-      print(f'could not checkout {branch.name}')
-      continue
-    if librun.RunCommand(reparent).returncode:
-      exit_msg(f'could not set branch upstream to {upstream.name}')
-
-def rebase_children(branch, repaint):
-  branch.data['rebase_status'] = 'Good'
-  repaint()
-  for child in branch.children:
-    rebase_branch(child, repaint)
-
-def rebase_branch(branch, repaint):
-  if '--force-rebase' not in sys.argv:
-    if branch.getBehind() == 0:
-      rebase_children(branch, repaint)
+  def cleanup(self):
+    librun.RunCommand('git rebase --abort')
+    if not self.current_branch_dirty():
+      return
+    librun.RunCommand('git clean -f -d')
+    if not self.current_branch_dirty():
+      return
+    librun.RunCommand('git checkout master')
+    if not self.current_branch_dirty():
+      return
+    librun.RunCommand('git reset --hard master')
+    if not self.current_branch_dirty():
       return
 
-  if branch.data.get('rebase_status', None) != None:
-    exit_msg('rebase encountered strange issue')
-  branch.data['rebase_status'] = 'Progress'
-  repaint()
 
-  if librun.RunCommand(f'git checkout {branch.name}').returncode:
-    branch.data['rebase_status'] = 'Bad'
-    repaint()
-    return False
-
-  if librun.RunCommand('git rebase').returncode or current_branch_dirty():
-    branch.data['rebase_status'] = 'Bad'
-    clean_rebase()
-    repaint()
-    return False
-
-  rebase_children(branch, repaint)
+class StopTask():
+  def Run(self):
+    libcurses.SendKillKey()
 
 
-def reparent_and_get_master(branches):
-  upstream_mirror = None
-  unparented_branches = set()
-  for name, branch in branches.items():
-    if branch.parent == 'origin/master':
-      upstream_mirror = branch
-    elif branch.parent == None and branch.name != 'trash':
-      unparented_branches.add(branch)
-  if not upstream_mirror:
-    exit_msg('no local branch has upstream origin/master')
-  reparent_branches(upstream_mirror, unparented_branches)
-  return upstream_mirror
+def CreateViewFromBranch(branch, taskQueue):
+  panel = TreeViewPanel(branch.name)
+  taskQueue.put(RebaseTask(branch, panel))
+  for child in branch.children:
+    panel.AddComponent(CreateViewFromBranch(child, taskQueue))
+  return panel
 
 
-def rebase_pump(master, repaint):
-  for child_of_master in master.children:
-    rebase_branch(child_of_master, repaint)
-
-
-class Context(object):
-  __slots__ = ('colors', 'terminal', 'tree', 'color_free')
-  def __init__(self, tree, color_free=False):
-    self.colors = None
-    self.terminal = None
-    self.tree = tree
-    self.color_free = color_free
-
-
-class TreeView(UI.NormalWindow):
-  def __init__(self):
-    super().__init__()
-    self.thread = None
-
-  def colorize(self, context):
-    def lam(branch):
-      GREEN = 'GREEN'
-      BLACK = 'BLACK'
-      RED = 'RED'
-      MAGENTA = 'MAGENTA'
-      YELLOW = 'YELLOW'
-      if context.color_free:
-        BLACK = 'WHITE'
-      if branch.data.get('rebase_status', None) == 'Good':
-        return context.colors.GetColor(GREEN, BLACK)
-      if branch.data.get('rebase_status', None) == 'Bad':
-        return context.colors.GetColor(RED, BLACK)
-      if branch.data.get('rebase_status', None) == 'Progress':
-        return context.colors.GetColor(MAGENTA, BLACK)
-      return context.colors.GetColor(YELLOW, BLACK)
-    return lam
-
-  def FormatBranch(self, branch):
-    return f'{branch.name}'
-
-  def RebaseTree(self, context):
-    rebase_pump(context.tree, lambda: context.terminal.PaintWindow(self))
-
-  def Repaint(self, context):
-    if self.thread == None:
-      self.thread = threading.Thread(target=self.RebaseTree, args=(context,))
-      self.thread.start()
-
-    liboutput.RenderOnNCurses(self, liboutput.PrintTree, self.colorize(context),
-      context.tree, render=self.FormatBranch, charset=liboutput.ASCII_ONLY)
-
-
-def main():
-  windows = [('...', '...', TreeView)]
+def CreateGitBranchTree(taskQueue):
   branches = libgitbranch.Branch.ReadGitRepo()
-  master = reparent_and_get_master(branches)
-  master.data["rebase_status"] = 'Good'
+  return CreateViewFromBranch(branches['master'], taskQueue)
 
-  with UI.Terminal(windows, Context(master, color_free=True)) as c:
-    c.Start()
-    c.WaitUntilEnded()
+
+class TreeViewLayout(libcurses.Layout):
+  def Render(self, graphics, components):
+    pushdown = 1
+    for idx, component in enumerate(components):
+      tree = "├"
+      if idx == len(components) - 1:
+        tree = "└"
+      graphics.WriteString(0, pushdown, f"{tree}")
+      for i in range(component.GetHeight()-1):
+        graphics.WriteString(0, pushdown+i+1, '│')
+
+      component.PaintComponent(
+        graphics.GetChild(1, pushdown, graphics.Width()-1, graphics.Height()-pushdown))
+      pushdown += component.GetHeight()
+
+
+class TreeViewPanel(libcurses.Panel):
+  def __init__(self, content):
+    super().__init__(TreeViewLayout())
+    self._content = content
+    self._color = None
+
+  def PaintComponent(self, graphics):
+    super().PaintComponent(graphics)
+    graphics.SetForground(self._color)
+    graphics.WriteString(0, 0, self._content)
+    graphics.SetForground(None)
+
+  def SetContent(self, content):
+    self._content = content
+
+  def GetHeight(self):
+    return 1 + sum(c.GetHeight() for c in self._children)
+
+  def SetContentColor(self, color):
+    self._color = color
+
+
+def RebasePump(taskQueue, fails):
+  while not taskQueue.empty():
+    if failure := taskQueue.get().Run():
+      fails.append(failure)
 
 
 if __name__ == '__main__':
-  try:
-    ensure_git()
-    main()
-  except ExitMsgError as e:
-    print(e.message, file=sys.stderr)
-    sys.exit(e.error)
+  libcurses.SetKillKey(113)
+  term = libcurses.Terminal(libcurses.RowLayout())
+  taskQueue = queue.Queue()
+  term.AddComponent(CreateGitBranchTree(taskQueue))
+  taskQueue.put(StopTask())
+  fails = []
+  rebase_thread = threading.Thread(target=RebasePump, args=(taskQueue, fails))
+  rebase_thread.start()
+  term.Start()
+  rebase_thread.join()
+  print(f'Failed branches: {fails}')

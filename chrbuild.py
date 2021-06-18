@@ -173,7 +173,7 @@ class NoBuild(Build):
 
 
 RPC = 'https://cr-buildbucket.appspot.com/prpc/buildbucket.v2.Builds/GetBuild'
-FMT = r'https://ci\.chromium\.org/p/(\S+)/builders/(\S+)/(\S+)/([b]*[0-9]+)'
+FMT = r'https://ci\.chromium\.org/ui/p/(\S+)/builders/(\S+)/(\S+)/([b]*[0-9]+)'
 PARSER = re.compile(FMT)
 
 def get_request_payload(url):
@@ -510,6 +510,13 @@ def web_tests():
 @goma_build
 def media_unittests():
   return Build(target='media_unittests', base='Tests', gn_args={
+    'is_debug': 'true',
+  })
+
+@complete('ffmpeg_regression_tests', 'build the ffmpeg regression tests')
+@goma_build
+def media_unittests():
+  return Build(target='ffmpeg_regression_tests', base='Tests', gn_args={
     'is_debug': 'true',
   })
 
