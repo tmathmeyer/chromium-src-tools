@@ -5,17 +5,17 @@ import queue
 import threading
 
 from lib import libcurses
-from lib import libgitbranch
+from lib import libgit
 from lib import librun
 
 
 class RebaseTask(namedtuple('RebaseTask', ['branch', 'view'])):
   def Run(self):
-    if self.branch.name == 'master':
+    if self.branch.Name() == 'master':
       self.view.SetContentColor('GREEN')
       self.view.Repaint()
       return None
-    branch_behind = self.branch.getBehind()
+    branch_behind = self.branch.GetAheadBehind()[1]
     if branch_behind == 0:
       self.view.SetContentColor('GREEN')
       self.view.Repaint()
@@ -24,30 +24,32 @@ class RebaseTask(namedtuple('RebaseTask', ['branch', 'view'])):
       self.view.SetContentColor('YELLOW')
       self.view.Repaint()
 
-    self.view.SetContent(f'{self.branch.name}: Checkout')
+    self.view.SetContent(f'{self.branch.Name()}: Checkout')
     self.view.Repaint()
-    if librun.RunCommand(f'git checkout {self.branch.name}').returncode:
+    if librun.RunCommand(f'git checkout {self.branch.Name()}').returncode:
       self.view.SetContentColor('RED')
       self.view.Repaint()
-      return self.branch.name
+      return self.branch.Name()
 
-    self.view.SetContent(f'{self.branch.name}: rebasing forward {branch_behind} commits')
+    self.view.SetContent(f'{self.branch.Name()}: rebasing forward {branch_behind} commits')
     self.view.Repaint()
     if librun.RunCommand('git rebase').returncode or self.current_branch_dirty():
       self.view.SetContentColor('RED')
       self.cleanup()
       self.view.Repaint()
-      return self.branch.name
+      return self.branch.Name()
 
-    self.view.SetContent(f'{self.branch.name}: gclient sync')
+    '''
+    self.view.SetContent(f'{self.branch.Name()}: gclient sync')
     self.view.Repaint()
     if librun.RunCommand('gclient --sync').returncode:
       self.view.SetContentColor('RED')
       self.cleanup()
       self.view.Repaint()
-      return self.branch.name
+      return self.branch.Name()
+    '''
 
-    self.view.SetContent(f'{self.branch.name}: Finished')
+    self.view.SetContent(f'{self.branch.Name()}: Finished')
     self.view.SetContentColor('GREEN')
     self.view.Repaint()
     return None
@@ -77,16 +79,15 @@ class StopTask():
 
 
 def CreateViewFromBranch(branch, taskQueue):
-  panel = TreeViewPanel(branch.name)
+  panel = TreeViewPanel(branch.Name())
   taskQueue.put(RebaseTask(branch, panel))
-  for child in branch.children:
+  for child in branch.Children():
     panel.AddComponent(CreateViewFromBranch(child, taskQueue))
   return panel
 
 
 def CreateGitBranchTree(taskQueue):
-  branches = libgitbranch.Branch.ReadGitRepo()
-  return CreateViewFromBranch(branches['master'], taskQueue)
+  return CreateViewFromBranch(libgit.Branch.Get('master'), taskQueue)
 
 
 class TreeViewLayout(libcurses.Layout):
@@ -108,16 +109,19 @@ class TreeViewLayout(libcurses.Layout):
 class TreeViewPanel(libcurses.Panel):
   def __init__(self, content):
     super().__init__(TreeViewLayout())
+    self._erase_content_len = 0
     self._content = content
     self._color = None
 
   def PaintComponent(self, graphics):
     super().PaintComponent(graphics)
     graphics.SetForground(self._color)
+    graphics.WriteString(0, 0, ' ' * self._erase_content_len)
     graphics.WriteString(0, 0, self._content)
     graphics.SetForground(None)
 
   def SetContent(self, content):
+    self._erase_content_len = len(self._content)
     self._content = content
 
   def GetHeight(self):
