@@ -6,6 +6,7 @@ import json
 import sys
 import subprocess
 import os
+import shutil
 import re
 import requests
 from urllib.parse import urlparse
@@ -13,12 +14,16 @@ from urllib.parse import urlparse
 
 CONFIG = {}
 
+def GetGomaDir():
+  goma_dir = shutil.which('goma_ctl')
+  return os.path.join(os.path.dirname(goma_dir), '.cipd_bin')
+
 
 def WriteDefaultConfig(path):
   home = os.environ['HOME']
   default_varaibles = {
-    'goma_root': f'/chromium/chromium-git/src/third_party/depot_tools/.cipd_bin',
-    'src_directory': f'/chromium/chromium-git/src',
+    'goma_root': GetGomaDir(),
+    'src_directory': f'/chromium/src',
     'virtualenv': None,
   }
   if not os.path.exists(os.path.dirname(path)):
