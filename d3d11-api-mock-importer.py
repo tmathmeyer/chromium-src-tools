@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3
 
 from lib import libhtmlparse as html_parser
 import requests
@@ -38,7 +38,9 @@ class MSApiPageParser(object):
   def GetNextMockMethod(self):
     r = requests.get(self._url)
     self._parser.feed(r.text)
+    print('loaded html')
     for capture in self._parser:
+      print(capture)
       data = capture.data[0]
       if data[0].tag == 'a':
         url = data[0].attrs[0][1]

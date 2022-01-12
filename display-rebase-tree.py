@@ -26,13 +26,15 @@ def get_branch_status(issue_number):
   return f'<{libgerrit.GetReviewDetail(issue_number).status}>'
 
 
-def disp_branch(highlight):
+def disp_branch(highlight, nogerrit):
   def _inner(branch):
     color = ''
-    try:
-      issue_number = getattr(branch, 'gerritissue', '')
-    except:
-      issue_number = None
+    issue_number = None
+    if not nogerrit:
+      try:
+        issue_number = getattr(branch, 'gerritissue', '')
+      except:
+        pass
 
     suffix = ''
     if issue_number:
@@ -42,7 +44,7 @@ def disp_branch(highlight):
     branch_ahead, branch_behind = branch.GetAheadBehind()
 
     prefix = f' ↑{branch_ahead} ↓{branch_behind}'
-    if (branch.Name() == 'master'):
+    if (branch.Name() == 'main'):
       prefix = ''
 
     if highlight == 'branch.current':
@@ -64,19 +66,19 @@ def disp_branch(highlight):
 
 
 @COMMAND
-def print_tree(highlight:str='branch.current'):
+def print_tree(highlight:str='branch.current', nogerrit:bool=False):
   if highlight == 'help':
     display_help()
     return
 
   setup()
-  master = libgit.Branch.Get('master')
+  master = libgit.Branch.Get('main')
   export = ['']
 
   def _print_to_buffer(s, _, capture=export):
     capture[0] += f'{s}\n'
 
-  liboutput.PrintTree(master, render=disp_branch(highlight=highlight),
+  liboutput.PrintTree(master, render=disp_branch(highlight=highlight, nogerrit=nogerrit),
                       charset=liboutput.BOLD_BOX_CHARACTERS,
                       output_function=_print_to_buffer,
                       child_iterator=lambda b:b.Children())

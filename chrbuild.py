@@ -17,7 +17,7 @@ CONFIG = {}
 def WriteDefaultConfig(path):
   home = os.environ['HOME']
   default_varaibles = {
-    'goma_root': f'/chromium/goma/client/out/Release',
+    'goma_root': f'/chromium/chromium-git/src/third_party/depot_tools/.cipd_bin',
     'src_directory': f'/chromium/chromium-git/src',
     'virtualenv': None,
   }
@@ -105,7 +105,7 @@ class Complete():
           args.append(arg)
 
       # Ensure goma is running
-      # os.system(f'{CONFIG["goma_root"]}/goma_ctl.py ensure_start 2>/dev/null > /dev/null')
+      os.system(f'{CONFIG["goma_root"]}/goma_ctl.py ensure_start 2>/dev/null > /dev/null')
       EnsurePython()
       outcome = self.run_func(self.fail, sys.argv[1], args, kwargs)
 
@@ -245,12 +245,12 @@ class BuildbotEntries(object):
     if self._gn_args:
       return self._gn_args
     for step in self._json.get('steps', []):
-      if step['name'] == 'lookup GN args':
+      if step['name'] == 'compilator steps (with patch)|lookup GN args':
         for log in step.get('logs', []):
           if log['name'] == 'execution details':
             return self._GetGnArgsFromURL(log['viewUrl'])
         raise ValueError('Could not get \'logs\' json entry for gn args')
-    raise ValueError('Could Not Find GN Args')
+    raise ValueError(f'Could Not Find GN Args')
 
   def _GetGnArgsFromURL(self, url):
     master = ''
@@ -354,7 +354,7 @@ def buildbot(url, *jobs):
   jobs = jobs or bb.GetCompileTargets()
   multibuild = MultiBuild(jobs, together=True)
   multibuild.gn_args.update(bb.GetGNArgs())
-  outdir = parsed.path.split('/')[-2].replace('_', '').upper()
+  outdir = parsed.path.split('/')[-3].replace('_', '').upper()
   multibuild.base = 'BOT-' + outdir
   return multibuild
 
@@ -570,6 +570,19 @@ def windows_chrome():
     'ffmpeg_branding': '"Chrome"',
     'is_component_build': 'true',
     'is_debug': 'false',
+  }, j=60)
+
+@complete('mini_installer', 'build chrome for windows')
+@goma_build
+def windows_chrome():
+  return Build(target='mini_installer', base='Win', gn_args={
+    'target_os': '"win"',
+    'is_component_build': 'true',
+    'use_goma': 'true',
+    'proprietary_codecs': 'true',
+    'ffmpeg_branding': '"Chrome"',
+    'is_component_build': 'true',
+    'is_debug': 'true',
   }, j=60)
 
 @complete('linux_chromium_rel_ng', 'linux_chromium_rel_ng')

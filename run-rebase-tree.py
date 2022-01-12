@@ -11,7 +11,7 @@ from lib import librun
 
 class RebaseTask(namedtuple('RebaseTask', ['branch', 'view'])):
   def Run(self):
-    if self.branch.Name() == 'master':
+    if self.branch.Name() == 'main':
       self.view.SetContentColor('GREEN')
       self.view.Repaint()
       return None
@@ -65,10 +65,10 @@ class RebaseTask(namedtuple('RebaseTask', ['branch', 'view'])):
     librun.RunCommand('git clean -f -d')
     if not self.current_branch_dirty():
       return
-    librun.RunCommand('git checkout master')
+    librun.RunCommand('git checkout main')
     if not self.current_branch_dirty():
       return
-    librun.RunCommand('git reset --hard master')
+    librun.RunCommand('git reset --hard main')
     if not self.current_branch_dirty():
       return
 
@@ -87,7 +87,7 @@ def CreateViewFromBranch(branch, taskQueue):
 
 
 def CreateGitBranchTree(taskQueue):
-  return CreateViewFromBranch(libgit.Branch.Get('master'), taskQueue)
+  return CreateViewFromBranch(libgit.Branch.Get('main'), taskQueue)
 
 
 class TreeViewLayout(libcurses.Layout):

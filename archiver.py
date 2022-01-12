@@ -13,7 +13,10 @@ PATCH_SERVICE = 'ted@tedm.io:/var/www/binary_builds/patches/'
 
 
 def CollectIssues(branch):
-  if branch.GetName() == 'master':
+  print(f'Collecting issues for |{branch.Name()}|')
+  if branch.Name() == 'master':
+    return []
+  if branch.Name() == 'main':
     return []
   try:
     crrev = getattr(branch, 'gerritissue', '')
@@ -27,7 +30,7 @@ def CollectIssues(branch):
 
 def CalculateFromRepo(git_path):
   with librun.cd(git_path):
-    branch = libgit.Branch()
+    branch = libgit.Branch.Current()
     ahead, behind = branch.AheadBehindMaster()
 
     if behind != 0:
@@ -35,7 +38,7 @@ def CalculateFromRepo(git_path):
 
     fd, patchfile = tempfile.mkstemp()
     os.close(fd)
-    os.system(f'git diff master {branch.GetName()} >> {patchfile}')
+    os.system(f'git diff main {branch.Name()} >> {patchfile}')
     print(patchfile)
     md5 = librun.OutputOrError(f'md5sum {patchfile}').split()[0]
 
@@ -56,7 +59,7 @@ class Options(object):
     # Default linux tools and commands
     self.binary = '{hash}.zip' # needs to be formatted
     self.packager = f'{TOOLS}/tools/package.linux.py --package ../{self.binary}'
-    self.build = 'b chrelease'
+    self.build = 'ninja -C out/Archive chrome -j1000'
     self.determineOS(opts)
 
   def _checkHelp(self, opts):
@@ -157,5 +160,6 @@ if __name__ == '__main__':
   try:
     main(Options(sys.argv))
   except Exception as e:
+    raise
     print(str(e))
     sys.exit(1)

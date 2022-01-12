@@ -33,6 +33,7 @@ LOF = [
   'resources.pak',
   'v8_context_snapshot.bin',
   'libminigbm.so',
+  'chrome_crashpad_handler',
 ]
 
 LOD = [
@@ -72,7 +73,7 @@ def parseArgs(*args, **kwargs):
 
 
 if __name__ == '__main__':
-  args = parseArgs(outdir='Release', package='chrome_pkg.zip', sofiles=None)
+  args = parseArgs(outdir='Archive', package='chrome_pkg.zip', sofiles=None)
   print(args)
 
   os.chdir(f'out/{args.outdir}')

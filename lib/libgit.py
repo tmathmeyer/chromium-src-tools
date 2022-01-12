@@ -7,7 +7,7 @@ class Branch(object):
     branchname = librun.OutputOrError('git symbolic-ref -q HEAD')
     if not branchname.startswith('refs/heads/'):
       raise ValueError(f'{branchname} is not a valid branch')
-    return cls.Get(branchname)
+    return cls.Get(branchname[11:])
 
   @classmethod
   def Get(cls, branchname):
@@ -40,7 +40,6 @@ class Branch(object):
     self._children = None
 
   def __getattr__(self, attr:str):
-
     return librun.OutputOrError(
       f'git config --get branch.{self._branchname}.{attr}')
 
@@ -51,7 +50,7 @@ class Branch(object):
     if self._children is None:
       self._children = []
       for branch in Branch.GetAllBranches():
-        if branch.Parent().Name() == self.Name():
+        if branch.Parent() and branch.Parent().Name() == self.Name():
           self._children.append(branch)
     return self._children
 
@@ -61,6 +60,8 @@ class Branch(object):
         f'git rev-parse --abbrev-ref {self._branchname}@{{u}}')
       return Branch.Get(parent)
     except ValueError:
+      if self.Name() == 'heads/origin/main':
+        return None
       return Branch.Default()
   
   def GetAheadBehind(self):
