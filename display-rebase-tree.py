@@ -72,13 +72,13 @@ def print_tree(highlight:str='branch.current', nogerrit:bool=False):
     return
 
   setup()
-  master = libgit.Branch.Get('main')
+  main = libgit.Branch.Get('main')
   export = ['']
 
   def _print_to_buffer(s, _, capture=export):
     capture[0] += f'{s}\n'
 
-  liboutput.PrintTree(master, render=disp_branch(highlight=highlight, nogerrit=nogerrit),
+  liboutput.PrintTree(main, render=disp_branch(highlight=highlight, nogerrit=nogerrit),
                       charset=liboutput.BOLD_BOX_CHARACTERS,
                       output_function=_print_to_buffer,
                       child_iterator=lambda b:b.Children())

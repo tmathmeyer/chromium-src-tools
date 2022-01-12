@@ -6,26 +6,41 @@ from datetime import datetime
 from lib import libgit, librun, libjson
 
 
-TOOLS = '/chromium/chromium-src-tools'
-BINARIES = 'ted@192.168.1.230:/media/chrome_binaries/'
+TOOLS = os.path.dirname(__file__)
+BINARIES = 'ted@50.35.80.74:/media/chrome_binaries/'
 DATA_SERVICE = 'ted@tedm.io:/var/www/binary_builds/hashes/'
 PATCH_SERVICE = 'ted@tedm.io:/var/www/binary_builds/patches/'
 
 
-def CollectIssues(branch):
-  print(f'Collecting issues for |{branch.Name()}|')
-  if branch.Name() == 'master':
-    return []
+def CollectIssues(branch:libgit.Branch) -> [str]:
   if branch.Name() == 'main':
     return []
+  result = CollectIssues(branch.Parent())
   try:
-    crrev = getattr(branch, 'gerritissue', '')
+    result.append(getattr(branch, 'gerritissue', ''))
   except:
-    crrev = None
-  chain = CollectIssues(branch.Parent())
-  if crrev:
-    return [crrev] + chain
-  return chain
+    pass
+  return result
+
+
+def GenerateDiffAndHash():
+  branch = libgit.Branch.Current()
+  ahead, behind = branch.AheadBehindMaster
+
+
+
+
+
+
+
+
+
+
+
+
+if __name__ == '__main__':
+  print(CollectIssues(libgit.Branch.Current()))
+
 
 
 def CalculateFromRepo(git_path):
@@ -147,6 +162,7 @@ class Archive(object):
       opts.vlog('Done')
 
 
+'''
 def main(opts):
   a = Archive('/chromium/chromium-git/src')
   if not a.BuildExists() or opts.force:
@@ -163,3 +179,4 @@ if __name__ == '__main__':
     raise
     print(str(e))
     sys.exit(1)
+'''

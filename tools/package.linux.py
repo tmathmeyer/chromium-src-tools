@@ -23,7 +23,7 @@ def CheckCommand(command):
 
 LOF = [
   'chrome',
-  'crashpad_handler',
+  'chrome_crashpad_handler',
   'chrome_100_percent.pak',
   'chrome_200_percent.pak',
   'chrome_sandbox',

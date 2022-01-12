@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.9
+#!/usr/bin/env python3
 
 import asyncio
 from flask import Flask, escape, request, send_from_directory, redirect
@@ -190,6 +190,12 @@ class DevDevArgs(FlObAr):
   def GetDevtoolsSrc(self):
     if hasattr(self, 'srcs'):
       return self.srcs
+    return os.path.join(
+      os.environ['CHROMIUM_SRC'],
+      'out', self.GetOutDir(),
+      'gen', 'third_party',
+      'devtools-frontend',
+      'src', 'front_end')
     return os.path.join(
       os.environ['CHROMIUM_SRC'],
       'out', self.GetOutDir(),
