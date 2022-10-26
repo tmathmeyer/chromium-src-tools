@@ -1,0 +1,14 @@
+{
+  "name": "Fuck Ads",
+  "description": "Skip Yourube Ads!",
+  "version": "1.0",
+  "manifest_version": 3,
+  "action": {},
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

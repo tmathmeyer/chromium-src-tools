@@ -26,9 +26,27 @@ def get_branch_status(issue_number):
   return f'<{libgerrit.GetReviewDetail(issue_number).status}>'
 
 
-def disp_branch(highlight, nogerrit):
+def disp_branch(highlight, nogerrit, quick):
   def _inner(branch):
     color = ''
+
+    if highlight == 'branch.current':
+      if branch.Name() == CURRENT_BRANCH.stdout.strip():
+        color += colors.Color(colors.GREEN)
+
+    if highlight == 'branch.merged':
+      if suffix.endswith('<MERGED>'):
+        color += colors.Color(colors.RED)
+
+    if quick:
+      return f'  {color}{branch.Name()}{colors.Color()}'
+
+    parent = branch.Parent()
+    if type(parent) != str:
+      parent = parent.Name()
+    else:
+      parent = 'UNKNOWN'
+
     issue_number = None
     if not nogerrit:
       try:
@@ -46,27 +64,15 @@ def disp_branch(highlight, nogerrit):
     prefix = f' ↑{branch_ahead} ↓{branch_behind}'
     if (branch.Name() == 'main'):
       prefix = ''
-
-    if highlight == 'branch.current':
-      if branch.Name() == CURRENT_BRANCH.stdout.strip():
-        color += colors.Color(colors.GREEN)
-
-    if highlight == 'branch.merged':
-      if suffix.endswith('<MERGED>'):
-        color += colors.Color(colors.GREEN)
-
-    parent = branch.Parent()
-    if type(parent) != str:
-      parent = parent.Name()
-    else:
-      parent = 'UNKNOWN'
     return f' {color}{branch.Name()} ({parent}){prefix}{suffix}{colors.Color()}'
 
   return _inner
 
 
 @COMMAND
-def print_tree(highlight:str='branch.current', nogerrit:bool=False):
+def print_tree(highlight:str='branch.current',
+               nogerrit:bool=False,
+               quick:bool=False):
   if highlight == 'help':
     display_help()
     return
@@ -78,10 +84,11 @@ def print_tree(highlight:str='branch.current', nogerrit:bool=False):
   def _print_to_buffer(s, _, capture=export):
     capture[0] += f'{s}\n'
 
-  liboutput.PrintTree(main, render=disp_branch(highlight=highlight, nogerrit=nogerrit),
-                      charset=liboutput.BOLD_BOX_CHARACTERS,
-                      output_function=_print_to_buffer,
-                      child_iterator=lambda b:b.Children())
+  liboutput.PrintTree(main,
+    render=disp_branch(highlight=highlight, nogerrit=nogerrit, quick=quick),
+    charset=liboutput.BOLD_BOX_CHARACTERS,
+    output_function=_print_to_buffer,
+    child_iterator=lambda b:b.Children())
   print(export[0])
 
 

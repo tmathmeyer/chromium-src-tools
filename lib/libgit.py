@@ -33,15 +33,22 @@ class Branch(object):
       'git symbolic-ref refs/remotes/origin/HEAD')
     return cls.Get(default_name[20:])
 
-  __slots__ = ('_branchname', '_children')
+  __slots__ = ('_branchname', '_children', '_parent')
 
   def __init__(self, branchname:str):
     self._branchname = branchname
     self._children = None
+    self._parent = None
 
   def __getattr__(self, attr:str):
     return librun.OutputOrError(
       f'git config --get branch.{self._branchname}.{attr}')
+
+  def __repr__(self):
+    return str(self)
+
+  def __str__(self):
+    return self._branchname
 
   def Name(self):
     return self._branchname
@@ -55,10 +62,13 @@ class Branch(object):
     return self._children
 
   def Parent(self):
+    if self._parent is not None:
+      return self._parent
     try:
       parent = librun.OutputOrError(
         f'git rev-parse --abbrev-ref {self._branchname}@{{u}}')
-      return Branch.Get(parent)
+      self._parent = Branch.Get(parent)
+      return self._parent
     except ValueError:
       if self.Name() == 'heads/origin/main':
         return None
@@ -72,9 +82,6 @@ class Branch(object):
       {self._branchname}...{branch} --count''')
     values = values.split()
     return int(values[0]), int(values[1])
-
-  def AheadBehindMaster(self):
-    return self.AheadBehindBranch('master')
 
   def GetFilesChanged(self):
     #TODO fix this doesn't work with constructed branch names

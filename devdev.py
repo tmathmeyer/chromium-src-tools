@@ -167,10 +167,10 @@ class DevDevArgs(FlObAr):
             '[--host=127.0.0.1]')
       exit()
 
-  def GetPort(self, default=9222):
+  def GetPort(self):
     if hasattr(self, 'port'):
       return int(self.port)
-    return default
+    return 9222
 
   def GetUrl(self):
     if hasattr(self, 'url'):
@@ -207,6 +207,19 @@ class DevDevArgs(FlObAr):
     return os.path.join(
       os.environ['CHROMIUM_SRC'],
       'out', self.GetOutDir(), 'chrome')
+
+  def GetFlaskPort(self):
+    if hasattr(self, 'flaskport'):
+      return self.flaskport
+    return 5000
+
+  def GetContentUrl(self):
+    return f'http://{self.GetHost()}:{self.GetFlaskPort()}'
+
+  def ShowSelfParsedArgs(self):
+    for ent in dir(self.__class__):
+      if callable(getattr(self, ent)) and ent.startswith('Get'):
+        log(f'{ent[3:]}: {getattr(self, ent)()}')
 
 
 def MakeWSProxy(comm, proxyport, pageid):
@@ -387,7 +400,9 @@ def RunItAll():
     log(conn.Page.navigate(url=args.GetUrl()), level='info')
     log('Navigation complete')
 
-    flaskapp.run(host=args.GetHost())
+    args.ShowSelfParsedArgs()
+    flaskapp.run(host=args.GetHost(), port=args.GetFlaskPort())
+
   except WhatsAlive as alive:
     kill_me()
 

@@ -14,7 +14,7 @@ def run(pattern:str, replace:str=None):
   else:
     cmd = f"grep --color=always {pattern}"
   
-  branch = libgit.Branch()
+  branch = libgit.Branch.Current()
   for x in branch.GetFilesChanged():
     with_arg = f"{cmd} {x}"
     result = librun.RunCommand(with_arg)
