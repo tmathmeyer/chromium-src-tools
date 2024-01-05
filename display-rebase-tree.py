@@ -34,10 +34,6 @@ def disp_branch(highlight, nogerrit, quick):
       if branch.Name() == CURRENT_BRANCH.stdout.strip():
         color += colors.Color(colors.GREEN)
 
-    if highlight == 'branch.merged':
-      if suffix.endswith('<MERGED>'):
-        color += colors.Color(colors.RED)
-
     if quick:
       return f'  {color}{branch.Name()}{colors.Color()}'
 
@@ -58,6 +54,17 @@ def disp_branch(highlight, nogerrit, quick):
     if issue_number:
       status = get_branch_status(issue_number)
       suffix = f' [https://crrev.com/c/{issue_number}] {status}'
+
+    if suffix.endswith('<MERGED>'):
+      if highlight == 'branch.merged':
+        color += colors.Color(colors.RED)
+      suffix = f'{colors.Color(colors.RED)}{suffix}{colors.Color()}'
+
+    if suffix.endswith('<ABANDONED>'):
+      suffix = f'{colors.Color(colors.CYAN)}{suffix}{colors.Color()}'
+
+    if suffix.endswith('<NEW>'):
+      suffix = f'{colors.Color(colors.YELLOW)}{suffix}{colors.Color()}'
 
     branch_ahead, branch_behind = branch.GetAheadBehind()
 

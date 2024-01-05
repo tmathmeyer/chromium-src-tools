@@ -35,6 +35,7 @@ LOF = [
   'v8_context_snapshot.bin',
   'libminigbm.so',
   'chrome_crashpad_handler',
+  'libvulkan.so.1',
 ]
 
 LOD = [
