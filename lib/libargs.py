@@ -73,7 +73,7 @@ class ArgumentParser(object):
       'setup': []
     }
     self._setMethodParameters(func, self._methods[methodname])
-    return None
+    return func
 
   def _setMethodParameters(self, func, detail) -> None:
     def MakeCall(name, *args, **kwargs):

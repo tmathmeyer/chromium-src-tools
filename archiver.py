@@ -2,12 +2,14 @@
 import os
 import sys
 import tempfile
+import json
+import requests
 from datetime import datetime
 from lib import libgit, librun, libjson
 
 
 TOOLS = os.path.dirname(__file__)
-BINARIES = 'ted@50.35.80.74:/media/chrome_binaries/'
+BINARIES = 'ted@50.47.216.50:/media/chrome_binaries/'
 DATA_SERVICE = 'ted@tedm.io:/var/www/binary_builds/hashes/'
 PATCH_SERVICE = 'ted@tedm.io:/var/www/binary_builds/patches/'
 
@@ -101,10 +103,12 @@ class ToolOptions():
   binary:str = ''
   build:str = ''
   cli:CommandLineArgs = None
+  hash_value = ''
 
   def __init__(self, cli, hash_value):
     self.cli = cli
     self._setupOs(hash_value)
+    self.hash_value = hash_value
 
   def _setupOs(self, hash_value):
     if self.cli.os == 'linux':
@@ -136,6 +140,22 @@ class ApiInterfaces():
     return hash_value in libjson.JSON.FromURL('https://archives.tedm.io/hashes')
 
   @staticmethod
+  def UploadArchive(opts:ToolOptions):
+    staging = 'ted@nas.lan.tedm.io:/raid/array0/chromearchives/staging/'
+    opts.run(f'scp {opts.binary} {staging}')
+    opts.run(f'rm {opts.binary}')
+
+  @staticmethod
+  def UploadMetadata(opts:ToolOptions, patchfile:str):
+    with open(patchfile, 'r') as f:
+      return requests.post('https://chrome.lan.tedm.io/api/notify', data=json.dumps({
+        'signature': opts.hash_value,
+        'patches': [f.read()],
+        'notes': '---',
+        'operating_system': opts.cli.os,
+      }))
+
+  @staticmethod
   def GenerateMetadataFile(hash_value:str, binary:str, notes:str=None) -> str:
     try:
       revisions = CollectIssues(libgit.Branch.Current())
@@ -156,7 +176,7 @@ class ApiInterfaces():
     opts.run(f'scp {metadata} {DATA_SERVICE}')
     opts.run(f'chmod 644 {opts.binary}')
     opts.run(f'scp {opts.binary} {BINARIES}')
-    opts.run(f'scp {patch} {PATCH_SERVICE}')
+    opts.run(f'scp {patch} {PATCH_SERVICE}{metadata}')
     opts.run(f'rm {opts.binary} {patch} {metadata}')
 
 
@@ -166,22 +186,20 @@ def main():
     return CommandLineArgs.PrintHelp()
 
   hash_value, patchfile = GenerateDiffAndHash()
-  if ApiInterfaces.BuildExists(hash_value) and not cli.force:
-    print(cli)
-    print('Build exists! not re-packaging')
-    return
 
   opts = ToolOptions(cli, hash_value)
-
   opts.log(cli)
   opts.log('Starting build')
   opts.run(opts.build)
   opts.log('Packaging')
   opts.run(opts.packager)
   opts.log('Collecting metadata')
-  metadata = ApiInterfaces.GenerateMetadataFile(
-    hash_value, opts.binary, cli.notes)
-  ApiInterfaces.UploadFiles(opts, metadata, patchfile)
+
+  ApiInterfaces.UploadArchive(opts)
+  response = ApiInterfaces.UploadMetadata(opts, patchfile)
+  print(response)
+  print(response.text)
+
   opts.log('Done.')
 
 
