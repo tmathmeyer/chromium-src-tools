@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Hls Player Test Page</title>
+    <style>
+      #video {
+        float: left;
+        width: calc(40% - 22px);
+        height: 600px;
+        text-align: center;
+        line-height: 600px;
+        position: fixed;
+        height: 100%;
+      }
+      #video > video {
+        width: 100%;
+        height: 433px;
+      }
+
+      li {
+        overflow: hidden;
+      }
+
+      #manifest-container {
+        position: fixed;
+        left: calc(40% - 12px);
+        width: 60%;
+        float: left;
+        border-bottom: none;
+        margin-left: 10px;
+        height: 100%;
+        overflow: scroll;
+      }
+
+      #manifest-container::-webkit-scrollbar {
+        display: none;
+      }
+
+      #newmanifest {
+        margin-bottom: 10px;
+      }
+
+      manifest-editor {
+        width: calc(100% - 10px);
+        height: 400px;
+        display: block;
+        border: 1px solid;
+        margin-bottom: 10px;
+      }
+
+      #videolist {
+        float: left;
+        top: 442px;
+        height: calc(100% - 461px);
+        position: absolute;
+        margin: 0;
+        border: 1px solid;
+        padding: 0;
+        width: calc(100% - 2px);
+        overflow-y: scroll;
+        scrollbar-width: none;
+      }
+
+      #videolist::-webkit-scrollbar {
+        display: none;
+      }
+
+      #videolist > li {
+        width: calc(100% - 10px);
+        height: 20px;
+        line-height: 20px;
+        font-size: 15px;
+        white-space: nowrap;
+        font-family: sans-serif;
+        text-align: left;
+        padding: 10px;
+        border-bottom: 1px solid #aaa;
+        padding-right: 0;
+        list-style-type: none;
+      }
+
+    </style>
+  </head>
+  <body>
+    <div id="video">
+      <video controls id="player" src=""></video>
+      <ul id="videolist">
+        {% for url in urls %}
+        <li>{{ url }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </body>
+  <script>
+
+    for (const el of document.getElementsByTagName('li')) {
+      el.addEventListener('click', (e) => {
+        document.getElementById('player').src = e.target.textContent;
+      });
+    }
+
+  </script>
+</html>

@@ -24,7 +24,7 @@ class Branch(object):
   def GetAllBranches(cls):
     branches = librun.OutputOrError(
       'git branch --format "%(refname:short)"').split('\n')
-    for branch in branches:
+    for branch in branches[::-1]:
       yield cls.Get(branch)
 
   @classmethod

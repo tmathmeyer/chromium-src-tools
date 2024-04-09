@@ -1,4 +1,5 @@
-#!/usr/bin/python
+#!/usr/bin/python3
+
 import os
 import sys
 import tempfile
@@ -114,11 +115,11 @@ class ToolOptions():
     if self.cli.os == 'linux':
       self.binary = f'{hash_value}.zip'
       self.packager = f'{TOOLS}/tools/package.linux.py --package {self.binary}'
-      self.build = 'ninja -C out/Release chrome -j2000'
+      self.build = 'autoninja -C out/Release chrome'
     elif self.cli.os == 'win':
       self.binary = f'{hash_value}_mini_installer.exe'
       self.packager = f'mv out/Windows/mini_installer.exe {self.binary}'
-      self.build = 'ninja -C out/Windows mini_installer -j2000'
+      self.build = 'autoninja -C out/Windows mini_installer'
     else:
       raise ValueError ('--os must be one of [linux|win]')
 
