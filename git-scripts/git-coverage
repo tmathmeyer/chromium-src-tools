@@ -28,7 +28,7 @@ def RunTarget(target:str, flt:str="*"):
 
 
 def FindTargetsForFiles(cc_sources:[str]):
-  targets = subprocess.check_output(['gn', 'refs', 'out/Release', *cc_sources])
+  targets = subprocess.check_output(['gn', 'refs', f'out/{OUTDIR}', *cc_sources])
   targets = targets.decode('utf-8').strip().split('\n')
   return targets
 
