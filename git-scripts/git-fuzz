@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+
+import sys
+
+from lib import libargs, librun, libgerrit, libgit, liboutput, colors
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def main(url_or_bugnum):
+  os.system('curl')
+
+
+
+
+if __name__ == '__main__':
+  main(*sys.argv[1:])
+
+
+
+
+@COMMAND
+def print_tree(highlight:str='branch.current',
+               nogerrit:bool=False,
+               quick:bool=False):
+  if highlight == 'help':
+    display_help()
+    return
+
+  setup()
+  main = libgit.Branch.Get('main')
+  export = ['']
+
+  def _print_to_buffer(s, _, capture=export):
+    capture[0] += f'{s}\n'
+
+  liboutput.PrintTree(main,
+    render=disp_branch(highlight=highlight, nogerrit=nogerrit, quick=quick),
+    charset=liboutput.BOLD_BOX_CHARACTERS,
+    output_function=_print_to_buffer,
+    child_iterator=lambda b:b.Children())
+  print(export[0])
+
+
+if __name__ == '__main__':
+  COMMAND.eval()

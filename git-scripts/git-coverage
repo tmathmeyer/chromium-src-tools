@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+
+
+import os
+import subprocess
+
+OUTDIR = 'Release'
+EDITS = []
+
+
+def _RunOrError(cmd):
+  print(f'Running: `{cmd}`')
+  if os.system(cmd) != 0:
+    raise Exception(f'Failed to execute: `{cmd}`')
+
+
+def BuildTarget(target:str, *flags:[str]):
+  flags = ' '.join(flags)
+  _RunOrError(f'autoninja -o {flags} -C out/{OUTDIR} {target}')
+
+
+def SetEnvironmentVars(target:str):
+  os.environ['LLVM_PROFILE_FILE'] = f'out/{OUTDIR}/report/{target}.%4m%c.profraw'
+
+
+def RunTarget(target:str, flt:str="*"):
+  _RunOrError(f'out/{OUTDIR}/{target} --gtest_filter="{flt}"')
+
+
+def FindTargetsForFiles(cc_sources:[str]):
+  targets = subprocess.check_output(['gn', 'refs', 'out/Release', *cc_sources])
+  targets = targets.decode('utf-8').strip().split('\n')
+  return targets
+
+
+def FindNinjaFilesFromTargets(targets:[str]):
+  for target in targets:
+    path, name = target[2:].split(':')
+    yield f'out/{OUTDIR}/obj/{path}/{name}.ninja'
+
+
+def InstrumentTargets(targets:[str]):
+  global EDITS
+  for ninjafile in FindNinjaFilesFromTargets(targets):
+    with open(ninjafile, 'r') as src:
+      with open(f'{ninjafile}.new', 'w') as dest:
+        for line in src.readlines():
+          if line.startswith('cflags = ') and '-fcoverage-mapping' not in line:
+            line = f'{line.strip()} -fcoverage-mapping -fprofile-instr-generate -mllvm -runtime-counter-relocation=true -mllvm -limited-coverage-experimental=true -fno-use-cxa-atexit\n'
+          dest.write(line)
+    os.system(f'mv {ninjafile} {ninjafile}.old')
+    os.system(f'mv {ninjafile}.new {ninjafile}')
+    EDITS.append(ninjafile)
+
+
+def GetCCSources(srcs:[str]) -> [str]:
+  for src in srcs:
+    if not src.endswith('.cc'):
+      Warn(f'Source file {src} cant be instrumented for coverage, as it does '
+           'not correspond directly to an object file!')
+    else:
+      yield src
+
+def TouchFiles(cc_srcs:[str]):
+  for file in cc_srcs:
+    os.system(f'touch {file}')
+
+
+def Warn(str):
+  print(str)
+
+
+def SetupCoverageDirectories():
+  if not os.path.exists(f'out/{OUTDIR}'):
+    raise Exception(f'Please `gn gen` out/{OUTDIR}')
+  if not os.path.exists(f'out/{OUTDIR}/report'):
+    os.system(f'mkdir out/{OUTDIR}/report')
+  with open(f'out/{OUTDIR}/args.gn', 'r') as f:
+    content = f.read()
+    coverage = 'use_clang_coverage = true'
+    if coverage in content:
+      Warn(f'Youve enabled coverage in gn_args for out/{OUTDIR}. Bad Idea.')
+
+
+def InstrumentTestLinkage(test:str):
+  global EDITS
+  testdir, testname = GetTestPath(test)
+  ninjafile = f'out/{OUTDIR}/obj/{testdir}/{testname}.ninja'
+  with open(ninjafile, 'r') as src:
+    with open(f'{ninjafile}.new', 'w') as dest:
+      for line in src.readlines():
+        if 'ldflags =' in line and '-fprofile-instr-generate' not in line:
+          pre, post = line.split('-rdynamic')
+          line = f'{pre}-fprofile-instr-generate -rdynamic{post}'
+        dest.write(line)
+
+  os.system(f'mv {ninjafile} {ninjafile}.old')
+  os.system(f'mv {ninjafile}.new {ninjafile}')
+  EDITS.append(ninjafile)
+
+
+def GetTestPath(test:str):
+  command = ['siso', 'query', 'targets', '-C', f'out/{OUTDIR}']
+  phony_name = f'{test}: phony'
+  for target in subprocess.check_output(command).decode('utf-8').split('\n'):
+    if phony_name in target:
+      return target.split(':')[:-1]
+  raise Exception(f'Could not find target {test}')
+
+
+def BuildInstrumentedTarget(test:str, srcs:[str]):
+  # Pre-build the target without instrumentation
+  BuildTarget(test)
+
+  # Get all cc files. What should be done about headers???
+  cc_sources = list(GetCCSources(srcs))
+
+  # Setup the lld flags
+  InstrumentTestLinkage(test)
+
+  # Find every ninja target that modifies these files, and add the coverage
+  # cc_flag options to the nijna files.
+  InstrumentTargets(FindTargetsForFiles(cc_sources))
+
+  # Update the timestamp for the input files so the compiler rebuilds
+  TouchFiles(cc_sources)
+
+  # Rebuild the target with instrumentation
+  BuildTarget(test)
+
+
+def MergeCoverage(target:str):
+  profdata = 'llvm-profdata'
+  flags = ' '.join([
+    'merge',
+    '-sparse=true',
+    f'-o out/{OUTDIR}/report/coverage.profdata',
+    f'out/{OUTDIR}/report/{target}.*'
+  ])
+  _RunOrError(f'{profdata} {flags}')
+  _RunOrError(f'rm out/{OUTDIR}/report/{target}.*')
+
+
+def GenerateReport(target:str, mode:str, srcfiles:[str]):
+  covtool = 'llvm-cov-19'
+  flags = ' '.join([
+    '' if (mode == 'lcov') else f'-output-dir=out/{OUTDIR}/report/{mode}',
+    f'-format={mode}',
+    f'-instr-profile=out/{OUTDIR}/report/coverage.profdata',
+    f'-compilation-dir=out/{OUTDIR}',
+    f'-Xdemangler=c++filt',
+    f'-path-equivalence=media/,/chromium/src/media/',
+    f'out/{OUTDIR}/{target}',
+  ])
+  sources = ' '.join(srcfiles) if srcfiles else ''
+  subcmd = 'export' if (mode == 'lcov') else 'show'
+
+  _RunOrError(f'{covtool} {subcmd} {flags} {sources}')
+
+
+def ResetEditedFiles():
+  global EDITS
+  for edit in EDITS:
+    os.system(f'mv {edit}.old {edit}')
+
+
+def Main(target:str, gtest_filter:str, *srcs:[str]):
+  SetupCoverageDirectories()
+
+  BuildInstrumentedTarget(target, srcs)
+
+  SetEnvironmentVars(target)
+
+  RunTarget(target, gtest_filter)
+
+  MergeCoverage(target)
+
+  GenerateReport(target, 'html', [])
+
+  ResetEditedFiles()
+
+
+
+
+if __name__ == '__main__':
+  import sys
+  binary, *args = sys.argv
+  Main(*args)
