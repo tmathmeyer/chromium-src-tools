@@ -41,12 +41,21 @@ def FindNinjaFilesFromTargets(targets:[str]):
 
 def InstrumentTargets(targets:[str]):
   global EDITS
+  required_flags = ' '.join([
+    '-fcoverage-mapping',
+    '-fprofile-instr-generate',
+    '-mllvm',
+    '-runtime-counter-relocation=true',
+    '-mllvm',
+    '-limited-coverage-experimental=true',
+    '-fno-use-cxa-atexit'
+  ])
   for ninjafile in FindNinjaFilesFromTargets(targets):
     with open(ninjafile, 'r') as src:
       with open(f'{ninjafile}.new', 'w') as dest:
         for line in src.readlines():
           if line.startswith('cflags = ') and '-fcoverage-mapping' not in line:
-            line = f'{line.strip()} -fcoverage-mapping -fprofile-instr-generate -mllvm -runtime-counter-relocation=true -mllvm -limited-coverage-experimental=true -fno-use-cxa-atexit\n'
+            line = f'{line.strip()} {required_flags}\n'
           dest.write(line)
     os.system(f'mv {ninjafile} {ninjafile}.old')
     os.system(f'mv {ninjafile}.new {ninjafile}')
@@ -142,6 +151,7 @@ def MergeCoverage(target:str):
 
 
 def GenerateReport(target:str, mode:str, srcfiles:[str]):
+  cwd = os.getcwd()
   covtool = 'llvm-cov-19'
   flags = ' '.join([
     '' if (mode == 'lcov') else f'-output-dir=out/{OUTDIR}/report/{mode}',
@@ -149,7 +159,7 @@ def GenerateReport(target:str, mode:str, srcfiles:[str]):
     f'-instr-profile=out/{OUTDIR}/report/coverage.profdata',
     f'-compilation-dir=out/{OUTDIR}',
     f'-Xdemangler=c++filt',
-    f'-path-equivalence=media/,/chromium/src/media/',
+    f'-path-equivalence=.,{cwd}/.',
     f'out/{OUTDIR}/{target}',
   ])
   sources = ' '.join(srcfiles) if srcfiles else ''
@@ -166,20 +176,15 @@ def ResetEditedFiles():
 
 def Main(target:str, gtest_filter:str, *srcs:[str]):
   SetupCoverageDirectories()
-
   BuildInstrumentedTarget(target, srcs)
-
   SetEnvironmentVars(target)
-
   RunTarget(target, gtest_filter)
-
   MergeCoverage(target)
-
-  GenerateReport(target, 'html', [])
-
+  GenerateReport(target, 'html', srcs)
   ResetEditedFiles()
 
-
+  cwd = os.getcwd()
+  print(f'Your report is ready at file://{cwd}/out/{OUTDIR}/report/html/index.html')
 
 
 if __name__ == '__main__':
