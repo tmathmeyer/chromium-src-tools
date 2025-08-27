@@ -190,4 +190,11 @@ def Main(target:str, gtest_filter:str, *srcs:[str]):
 if __name__ == '__main__':
   import sys
   binary, *args = sys.argv
-  Main(*args)
+
+  if args[0] == 'help':
+    print('usage: git coverage <unit_test> <gtest_filter> <source_files...>')
+    print('  example:')
+    print('    git coverage media_unittests Hls* media/formats/hls/*')
+    print('  Runs media_unittests --gtest_filter="Hls*" and derrives coverage')
+  else:
+    Main(*args)
